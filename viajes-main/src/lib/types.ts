@@ -78,6 +78,7 @@ export interface Hotel {
   url: string;
   photoUrl?: string;
   distanceFromCenter?: string;
+  platform?: string;
 }
 
 export interface ItineraryData {
