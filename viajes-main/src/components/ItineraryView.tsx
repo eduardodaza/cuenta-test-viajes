@@ -156,56 +156,44 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
       {/* ── HOTELS ── */}
       {tab === "hotels" && (
         <div>
+          <div className="card" style={{ marginBottom: 12, background: "#f8f7f4", border: "1px solid #ede9e2" }}>
+            <p style={{ fontSize: 13, color: "#555", margin: 0, lineHeight: 1.6 }}>
+              🏨 Busca y compara hoteles en <strong>{data.city}</strong> en las mejores plataformas. Haz clic en cualquier opción para ver disponibilidad y precios reales.
+            </p>
+          </div>
           {data.hotels && data.hotels.length > 0 ? (
-            <>
-              <p style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>
-                🏨 {data.hotels.length} hotels found via Booking.com
-              </p>
-              {data.hotels.map((hotel, i) => (
-                <div key={i} className="card" style={{ marginBottom: 10, display: "flex", gap: 12 }}>
-                  {hotel.photoUrl && (
-                    <img src={hotel.photoUrl} alt={hotel.name}
-                      style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8, flexShrink: 0 }} />
-                  )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                      <div style={{ fontSize: 14, fontWeight: 500, color: "#1a1a18" }}>{hotel.name}</div>
-                      <a href={hotel.url} target="_blank" rel="noopener noreferrer"
-                        style={{ fontSize: 11, padding: "4px 10px", background: "#1a6b4a", color: "white", borderRadius: 8, textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>
-                        {t("bookNow", locale)} ↗
-                      </a>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {data.hotels.map((hotel, i) => {
+                const platformColors: Record<string, { bg: string; color: string; border: string }> = {
+                  "Booking.com":  { bg: "#003580", color: "white",   border: "#003580" },
+                  "Hotels.com":   { bg: "#d32d20", color: "white",   border: "#d32d20" },
+                  "Expedia":      { bg: "#1a1aff", color: "white",   border: "#1a1aff" },
+                  "Hostelworld":  { bg: "#ff6600", color: "white",   border: "#ff6600" },
+                  "TripAdvisor":  { bg: "#00af87", color: "white",   border: "#00af87" },
+                };
+                const pc = platformColors[hotel.platform ?? ""] ?? { bg: "#1a6b4a", color: "white", border: "#1a6b4a" };
+                return (
+                  <a key={i} href={hotel.url} target="_blank" rel="noopener noreferrer"
+                    style={{ textDecoration: "none", display: "block" }}>
+                    <div style={{ border: `2px solid ${pc.border}`, borderRadius: 12, padding: "14px 16px", background: "white", transition: "transform 0.15s", cursor: "pointer" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: pc.bg, marginBottom: 4 }}>
+                        {hotel.platform ?? hotel.name}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>
+                        {data.city}, {data.country}
+                      </div>
+                      <div style={{ background: pc.bg, color: pc.color, borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 500, textAlign: "center" }}>
+                        Buscar hoteles ↗
+                      </div>
                     </div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-                      {hotel.stars > 0 && (
-                        <span style={{ fontSize: 11, color: "#854f0b" }}>
-                          {"★".repeat(hotel.stars)}{"☆".repeat(Math.max(0, 5 - hotel.stars))}
-                        </span>
-                      )}
-                      {hotel.reviewScore > 0 && (
-                        <span style={{ fontSize: 11, background: "#1a6b4a", color: "white", padding: "1px 6px", borderRadius: 6 }}>
-                          {hotel.reviewScore.toFixed(1)} · {hotel.reviewCount} reviews
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", gap: 12, marginTop: 6, flexWrap: "wrap" }}>
-                      {hotel.pricePerNight !== "N/A" && (
-                        <span style={{ fontSize: 13, fontWeight: 500, color: "#e85d26" }}>
-                          {hotel.currency} {hotel.pricePerNight} / night
-                        </span>
-                      )}
-                      {hotel.distanceFromCenter && (
-                        <span style={{ fontSize: 11, color: "#888" }}>📍 {hotel.distanceFromCenter}</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </>
+                  </a>
+                );
+              })}
+            </div>
           ) : (
             <div className="card" style={{ textAlign: "center", color: "#888", padding: "2rem" }}>
               <div style={{ fontSize: 32, marginBottom: 8 }}>🏨</div>
-              <div style={{ fontSize: 14, marginBottom: 4 }}>No hotel data available</div>
-              <div style={{ fontSize: 12 }}>Add <code>RAPIDAPI_KEY</code> to enable Booking.com integration</div>
+              <div style={{ fontSize: 14 }}>Generando links de hoteles...</div>
             </div>
           )}
         </div>
