@@ -12,29 +12,58 @@ function extractJSON(text: string): string {
   return s;
 }
 
-function buildRestaurantLinks(name: string, city: string, country: string) {
-  const q     = encodeURIComponent(`${name} ${city}`);
-  const qFull = encodeURIComponent(`${name} ${city} ${country}`);
-  return {
-    googleMaps:  `https://www.google.com/maps/search/${q}`,
-    tripAdvisor: `https://www.tripadvisor.com/Search?q=${qFull}`,
-    yelp:        `https://www.yelp.com/search?find_desc=${encodeURIComponent(name)}&find_loc=${encodeURIComponent(city)}`,
-    theFork:     `https://www.thefork.com/search?cityName=${encodeURIComponent(city)}&searchQuery=${encodeURIComponent(name)}`,
-  };
-}
+// ── Hotel links — sin API, gratuito ──────────────────────────
 
-function buildAttractionLinks(name: string, city: string) {
-  const q = encodeURIComponent(`${name} ${city}`);
-  return {
-    googleMaps:  `https://www.google.com/maps/search/${q}`,
-    tripAdvisor: `https://www.tripadvisor.com/Search?q=${q}`,
-    wikipedia:   `https://en.wikipedia.org/wiki/Special:Search?search=${q}`,
-    viator:      `https://www.viator.com/searchResults/all?text=${q}`,
-  };
-}
+function buildHotelLinks(form: TripFormData): Hotel[] {
+  const query = encodeURIComponent(`${form.city}, ${form.country}`);
+  const city  = encodeURIComponent(form.city);
+  const ctry  = encodeURIComponent(form.country);
+  const cin   = form.startDate;
+  const cout  = form.endDate;
+  const adults = form.travelers;
 
-function buildHotelUrl(hotelName: string, city: string, startDate: string, endDate: string, travelers: number): string {
-  return `https://www.booking.com/searchresults.html?ss=${encodeURIComponent(hotelName + " " + city)}&checkin=${startDate}&checkout=${endDate}&group_adults=${travelers}&selected_currency=USD`;
+  return [
+    {
+      name: `Hoteles en ${form.city} — Booking.com`,
+      stars: 0, reviewScore: 0, reviewCount: 0,
+      pricePerNight: "Ver precios", currency: "",
+      address: `${form.city}, ${form.country}`,
+      platform: "Booking.com",
+      url: `https://www.booking.com/searchresults.html?ss=${query}&checkin=${cin}&checkout=${cout}&group_adults=${adults}&selected_currency=USD`,
+    },
+    {
+      name: `Hoteles en ${form.city} — Hotels.com`,
+      stars: 0, reviewScore: 0, reviewCount: 0,
+      pricePerNight: "Ver precios", currency: "",
+      address: `${form.city}, ${form.country}`,
+      platform: "Hotels.com",
+      url: `https://www.hotels.com/search.do?q-destination=${query}&q-check-in=${cin}&q-check-out=${cout}&q-rooms=1&q-room-0-adults=${adults}`,
+    },
+    {
+      name: `Hoteles en ${form.city} — Expedia`,
+      stars: 0, reviewScore: 0, reviewCount: 0,
+      pricePerNight: "Ver precios", currency: "",
+      address: `${form.city}, ${form.country}`,
+      platform: "Expedia",
+      url: `https://www.expedia.com/Hotel-Search?destination=${query}&startDate=${cin}&endDate=${cout}&adults=${adults}`,
+    },
+    {
+      name: `Hoteles en ${form.city} — Hostelworld`,
+      stars: 0, reviewScore: 0, reviewCount: 0,
+      pricePerNight: "Ver precios", currency: "",
+      address: `${form.city}, ${form.country}`,
+      platform: "Hostelworld",
+      url: `https://www.hostelworld.com/findabed.php/ChosenCity.${city}/ChosenCountry.${ctry}/DateFrom.${cin}/DateTo.${cout}/number_of_guests.${adults}`,
+    },
+    {
+      name: `Hoteles en ${form.city} — TripAdvisor`,
+      stars: 0, reviewScore: 0, reviewCount: 0,
+      pricePerNight: "Ver precios", currency: "",
+      address: `${form.city}, ${form.country}`,
+      platform: "TripAdvisor",
+      url: `https://www.tripadvisor.com/Search?q=${query}+hotels`,
+    },
+  ];
 }
 
 // ── Groq ──────────────────────────────────────────────────────
@@ -59,7 +88,7 @@ async function callGroq(prompt: string, maxTokens: number): Promise<string> {
   }
   const data = await res.json();
   const text: string = data?.choices?.[0]?.message?.content ?? "";
-  if (!text) throw new Error(`Empty Groq response: ${JSON.stringify(data)}`);
+  if (!text) throw new Error(`Empty Groq response`);
   return text;
 }
 
@@ -67,44 +96,25 @@ async function callGroq(prompt: string, maxTokens: number): Promise<string> {
 
 async function fetchWikidataAttractions(city: string): Promise<{ name: string; description: string }[]> {
   try {
-    const sparql = `
-SELECT DISTINCT ?place ?placeLabel ?desc WHERE {
-  { ?place wdt:P131 ?loc . ?loc rdfs:label "${city}"@en . }
-  UNION
-  { ?place wdt:P131 ?loc . ?loc rdfs:label "${city}"@es . }
-  ?place wdt:P31 ?type .
-  VALUES ?type { wd:Q570116 wd:Q33506 wd:Q4989906 wd:Q23413 wd:Q839954 wd:Q1248784 wd:Q24398318 }
-  OPTIONAL { ?place schema:description ?desc . FILTER(LANG(?desc)="en") }
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "en,es" }
-} LIMIT 8`.trim();
-
+    const sparql = `SELECT DISTINCT ?placeLabel ?desc WHERE {
+      { ?place wdt:P131 ?loc . ?loc rdfs:label "${city}"@en . }
+      UNION { ?place wdt:P131 ?loc . ?loc rdfs:label "${city}"@es . }
+      ?place wdt:P31 ?type .
+      VALUES ?type { wd:Q570116 wd:Q33506 wd:Q4989906 wd:Q23413 wd:Q839954 }
+      OPTIONAL { ?place schema:description ?desc . FILTER(LANG(?desc)="en") }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "en,es" }
+    } LIMIT 8`;
     const url = `https://query.wikidata.org/sparql?query=${encodeURIComponent(sparql)}&format=json`;
-    const res = await fetch(url, {
-      headers: { "Accept": "application/json", "User-Agent": "TripCraftAI/1.0" },
-    });
+    const res = await fetch(url, { headers: { "Accept": "application/json", "User-Agent": "TripCraftAI/1.0" } });
     if (!res.ok) return [];
     const data = await res.json();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (data?.results?.bindings ?? []).map((b: any) => ({
-      name:        b.placeLabel?.value ?? "",
+      name: b.placeLabel?.value ?? "",
       description: b.desc?.value ?? "",
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     })).filter((p: any) => p.name && !p.name.startsWith("Q"));
   } catch { return []; }
-}
-
-// ── Wikipedia ─────────────────────────────────────────────────
-
-async function fetchWikipediaDescription(placeName: string): Promise<string> {
-  try {
-    const res = await fetch(
-      `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(placeName)}`,
-      { headers: { "User-Agent": "TripCraftAI/1.0" } }
-    );
-    if (!res.ok) return "";
-    const data = await res.json();
-    return data?.extract ? data.extract.slice(0, 200) + "…" : "";
-  } catch { return ""; }
 }
 
 // ── OpenWeather ───────────────────────────────────────────────
@@ -135,7 +145,8 @@ async function fetchWeather(city: string, country: string) {
 
 // ── Ticketmaster ──────────────────────────────────────────────
 
-async function fetchTicketmaster(city: string, startDate: string, endDate: string) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchTicketmaster(city: string, startDate: string, endDate: string): Promise<any[]> {
   const key = process.env.TICKETMASTER_API_KEY;
   if (!key) return [];
   try {
@@ -159,7 +170,8 @@ async function fetchTicketmaster(city: string, startDate: string, endDate: strin
 
 // ── Eventbrite ────────────────────────────────────────────────
 
-async function fetchEventbrite(city: string, startDate: string, endDate: string) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchEventbrite(city: string, startDate: string, endDate: string): Promise<any[]> {
   const key = process.env.EVENTBRITE_API_KEY;
   if (!key) return [];
   try {
@@ -179,68 +191,6 @@ async function fetchEventbrite(city: string, startDate: string, endDate: string)
       ticketUrl:   ev.url ?? "",
       source:      "Eventbrite",
     }));
-  } catch { return []; }
-}
-
-// ── Booking.com ───────────────────────────────────────────────
-
-async function fetchHotels(form: TripFormData): Promise<Hotel[]> {
-  const key = process.env.RAPIDAPI_KEY;
-  if (!key) return [];
-  try {
-    const destRes = await fetch(
-      `https://booking-com15.p.rapidapi.com/api/v1/hotels/searchDestination?query=${encodeURIComponent(form.city)}`,
-      { headers: { "x-rapidapi-key": key, "x-rapidapi-host": "booking-com15.p.rapidapi.com" } }
-    );
-    const destData = await destRes.json();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const cityResult = destData?.data?.find((d: any) => d.dest_type === "city") ?? destData?.data?.[0];
-    const destId = cityResult?.dest_id;
-    if (!destId) return [];
-
-    const params = new URLSearchParams({
-      dest_id: destId, search_type: "CITY",
-      arrival_date: form.startDate, departure_date: form.endDate,
-      adults: String(form.travelers), room_qty: "1",
-      units: "metric", currency_code: "USD",
-      languagecode: "en-us", page_number: "1",
-    });
-
-    const hotelRes = await fetch(
-      `https://booking-com15.p.rapidapi.com/api/v1/hotels/searchHotels?${params}`,
-      { headers: { "x-rapidapi-key": key, "x-rapidapi-host": "booking-com15.p.rapidapi.com" } }
-    );
-    const hotelData = await hotelRes.json();
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (hotelData?.data?.hotels ?? []).filter((h: any) => (h.property?.reviewScore ?? 0) >= 7)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .sort((a: any, b: any) => {
-        const pa = a.property?.priceBreakdown?.grossPrice?.value ?? 999999;
-        const pb = b.property?.priceBreakdown?.grossPrice?.value ?? 999999;
-        return pa - pb;
-      })
-      .slice(0, 5)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((h: any) => {
-        const p = h.property ?? {};
-        return {
-          name:               p.name ?? "Hotel",
-          stars:              p.propertyClass ?? 0,
-          reviewScore:        p.reviewScore ?? 0,
-          reviewCount:        p.reviewCount ?? 0,
-          pricePerNight:      p.priceBreakdown?.grossPrice?.value
-                                ? String(Math.round(p.priceBreakdown.grossPrice.value))
-                                : "N/A",
-          currency:           p.priceBreakdown?.grossPrice?.currency ?? "USD",
-          address:            p.address ?? form.city,
-          url:                buildHotelUrl(p.name ?? "", form.city, form.startDate, form.endDate, form.travelers),
-          photoUrl:           Array.isArray(p.photoUrls) ? p.photoUrls[0] : undefined,
-          distanceFromCenter: p.distanceToCC
-                                ? `${parseFloat(p.distanceToCC).toFixed(1)} km from center`
-                                : undefined,
-        };
-      });
   } catch { return []; }
 }
 
@@ -276,17 +226,14 @@ async function enrichWithGeoapify(itinerary: ItineraryData, form: TripFormData) 
     const geoData = await geoRes.json();
     const coords = geoData?.features?.[0]?.geometry?.coordinates;
     if (!coords) return;
-
     const [lon, lat] = coords;
     const poiRes = await fetch(
       `https://api.geoapify.com/v2/places?categories=tourism.attraction,tourism.sights,entertainment.museum&filter=circle:${lon},${lat},5000&limit=6&apiKey=${key}`
     );
     const poiData = await poiRes.json();
-    const places = poiData?.features ?? [];
-
-    if (places.length > 0 && itinerary.days?.[0]) {
+    if (itinerary.days?.[0]) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const place of places.slice(0, 3)) {
+      for (const place of (poiData?.features ?? []).slice(0, 3)) {
         const props = place.properties;
         const name = props?.name;
         if (!name) continue;
@@ -295,16 +242,16 @@ async function enrichWithGeoapify(itinerary: ItineraryData, form: TripFormData) 
         );
         if (!alreadyIn) {
           itinerary.days[0].items.push({
-            id:            `geo_${props.place_id?.slice(0, 8) ?? Math.random().toString(36).slice(2)}`,
-            time:          "18:00",
+            id:            `geo_${Math.random().toString(36).slice(2, 8)}`,
+            time:          "10:00",
             type:          "sight",
             name,
-            description:   props.datasource?.raw?.description ?? `${props.categories?.[0] ?? "Attraction"} in ${form.city}.`,
+            description:   `${props.categories?.[0] ?? "Attraction"} in ${form.city}.`,
             duration:      "1h",
             transport:     "walking",
             transportTime: "varies",
             price:         "$",
-            rating:        props.datasource?.raw?.rating ?? "",
+            rating:        "",
             tip:           props.website ? `Visit: ${props.website}` : "",
           });
         }
@@ -334,8 +281,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       itinerary = JSON.parse(jsonStr);
     } catch {
       const fixText = await callGroq(
-        `Fix this JSON and return ONLY the corrected valid JSON, no explanation:\n\n${jsonStr}`,
-        6000
+        `Fix this JSON and return ONLY valid JSON, no explanation:\n\n${jsonStr}`, 6000
       );
       itinerary = JSON.parse(extractJSON(fixText));
     }
@@ -344,34 +290,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     itinerary.alerts      = itinerary.alerts      ?? [];
     itinerary.restaurants = itinerary.restaurants ?? [];
 
-    // ── 2. Dynamic links — restaurants (no API key needed) ────
-    for (const resto of itinerary.restaurants) {
-      resto.links = buildRestaurantLinks(resto.name, form.city, form.country);
-    }
+    // ── 2. Hotels — links directos sin API ───────────────────
+    itinerary.hotels = buildHotelLinks(form);
 
-    // ── 3. Dynamic links — attractions (no API key needed) ────
-    for (const day of itinerary.days ?? []) {
-      for (const item of day.items ?? []) {
-        if (item.type === "sight" || item.type === "event" || item.type === "beach") {
-          item.links = buildAttractionLinks(item.name, form.city);
-          if (item.price && item.price !== "$" && item.price !== "free") {
-            item.viatorUrl = `https://www.viator.com/searchResults/all?text=${encodeURIComponent(item.name + " " + form.city)}`;
-          }
-        }
-      }
-    }
-
-    // ── 4. Parallel enrichment calls ─────────────────────────
-    const [wikidataRes, weatherRes, tmRes, ebRes, hotelsRes] = await Promise.allSettled([
+    // ── 3. Parallel enrichment ────────────────────────────────
+    const [wikidataRes, weatherRes, tmRes, ebRes] = await Promise.allSettled([
       fetchWikidataAttractions(form.city),
       fetchWeather(form.city, form.country),
       fetchTicketmaster(form.city, form.startDate, form.endDate),
       fetchEventbrite(form.city, form.startDate, form.endDate),
-      fetchHotels(form),
     ]);
 
-    // ── 5. Wikidata — enrich sight descriptions ───────────────
-    if (wikidataRes.status === "fulfilled" && wikidataRes.value.length > 0) {
+    // ── 4. Wikidata descriptions ──────────────────────────────
+    if (wikidataRes.status === "fulfilled") {
       const wdPlaces = wikidataRes.value;
       for (const day of itinerary.days ?? []) {
         for (const item of day.items ?? []) {
@@ -385,16 +316,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }
         }
       }
-      const cityWiki = await fetchWikipediaDescription(form.city).catch(() => "");
-      if (cityWiki) itinerary.cityWikipediaExtract = cityWiki;
     }
 
-    // ── 6. Weather ────────────────────────────────────────────
+    // ── 5. Weather ────────────────────────────────────────────
     if (weatherRes.status === "fulfilled" && weatherRes.value) {
       itinerary.weather = { ...itinerary.weather, ...weatherRes.value };
     }
 
-    // ── 7. Ticketmaster events ────────────────────────────────
+    // ── 6. Ticketmaster events ────────────────────────────────
     if (tmRes.status === "fulfilled") {
       const seen = new Set(itinerary.events.map(e => e.name.toLowerCase()));
       for (const ev of tmRes.value) {
@@ -405,7 +334,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // ── 8. Eventbrite events ──────────────────────────────────
+    // ── 7. Eventbrite events ──────────────────────────────────
     if (ebRes.status === "fulfilled") {
       const seen = new Set(itinerary.events.map(e => e.name.toLowerCase()));
       for (const ev of ebRes.value) {
@@ -416,19 +345,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // ── 9. Hotels ─────────────────────────────────────────────
-    if (hotelsRes.status === "fulfilled" && hotelsRes.value.length > 0) {
-      itinerary.hotels = hotelsRes.value;
-    }
-
-    // ── 10. Google Places — restaurant ratings ────────────────
+    // ── 8. Google Places ratings ──────────────────────────────
     await enrichRestaurantRatings(itinerary.restaurants, form.city);
 
-    // ── 11. Geoapify — real POIs ──────────────────────────────
+    // ── 9. Geoapify POIs ──────────────────────────────────────
     await enrichWithGeoapify(itinerary, form);
 
-    // ── 12. Source tag ────────────────────────────────────────
-    itinerary.generatedBy = "Groq LLaMA 3.3 70B · Wikidata · Wikipedia · Ticketmaster · Eventbrite";
+    // ── 10. Source tag ────────────────────────────────────────
+    itinerary.generatedBy = "Groq LLaMA 3.3 70B · Wikidata · Ticketmaster · Eventbrite";
 
     return res.status(200).json(itinerary);
 
