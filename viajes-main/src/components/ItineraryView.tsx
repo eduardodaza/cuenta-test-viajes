@@ -438,7 +438,7 @@ function RestaurantsPanel({ restaurants, locale, city }: { restaurants: Itinerar
                       style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
                       🍴 Yelp
                     </a>
-                    <a href={`https://www.thefork.com/search?searchQuery=${encodeURIComponent(r.name)}&cityName=${encodeURIComponent(city)}`}
+                    <a href={`https://www.thefork.com/search?q=${encodeURIComponent(r.name + " " + city)}`}
                       target="_blank" rel="noopener noreferrer"
                       style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #00848a", borderRadius: 6, textDecoration: "none", color: "#00848a", background: "#f0fafa" }}>
                       🍽 TheFork
