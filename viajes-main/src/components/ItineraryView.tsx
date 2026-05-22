@@ -123,7 +123,7 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
 
       {/* ── RESTAURANTS ── */}
       {tab === "restaurants" && (
-        <RestaurantsPanel restaurants={data.restaurants} locale={locale} />
+        <RestaurantsPanel restaurants={data.restaurants} locale={locale} city={data.city} />
       )}
 
       {/* ── EVENTS ── */}
@@ -379,7 +379,7 @@ function DayCard({ day, index, open, onToggle, edits, onEdit, locale }: {
 
 // ── RestaurantsPanel ──────────────────────────────────────────
 
-function RestaurantsPanel({ restaurants, locale }: { restaurants: ItineraryData["restaurants"]; locale: Locale }) {
+function RestaurantsPanel({ restaurants, locale, city }: { restaurants: ItineraryData["restaurants"]; locale: Locale; city: string }) {
   const tiers = ["$", "$$", "$$$", "$$$$"] as const;
   const tierLabels: Record<string, string> = {
     "$": t("economico", locale), "$$": t("moderado", locale),
@@ -435,22 +435,22 @@ function RestaurantsPanel({ restaurants, locale }: { restaurants: ItineraryData[
 
                   {/* Links de restaurante */}
                   <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                    <a href={`https://www.google.com/maps/search/${encodeURIComponent(r.name + " " + r.zone)}`}
+                    <a href={`https://www.google.com/maps/search/${encodeURIComponent(r.name + " " + (r.zone ?? "") + " " + (r.address ?? ""))}`}
                       target="_blank" rel="noopener noreferrer"
                       style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
                       🗺 Maps
                     </a>
-                    <a href={`https://www.tripadvisor.com/Search?q=${encodeURIComponent(r.name)}`}
+                    <a href={`https://www.tripadvisor.com/Search?q=${encodeURIComponent(r.name + " " + city)}`}
                       target="_blank" rel="noopener noreferrer"
                       style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
                       ⭐ TripAdvisor
                     </a>
-                    <a href={`https://www.yelp.com/search?find_desc=${encodeURIComponent(r.name)}&find_loc=${encodeURIComponent(r.zone ?? "")}`}
+                    <a href={`https://www.yelp.com/search?find_desc=${encodeURIComponent(r.name)}&find_loc=${encodeURIComponent(city)}`}
                       target="_blank" rel="noopener noreferrer"
                       style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
                       🍴 Yelp
                     </a>
-                    <a href={`https://www.thefork.com/search?searchQuery=${encodeURIComponent(r.name)}`}
+                    <a href={`https://www.thefork.com/search?searchQuery=${encodeURIComponent(r.name)}&cityName=${encodeURIComponent(city)}`}
                       target="_blank" rel="noopener noreferrer"
                       style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #00848a", borderRadius: 6, textDecoration: "none", color: "#00848a", background: "#f0fafa" }}>
                       🍽 TheFork
