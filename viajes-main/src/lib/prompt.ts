@@ -6,6 +6,7 @@ export function buildItineraryPrompt(form: TripFormData): string {
   const ed = new Date(form.endDate + "T12:00:00");
   const days = Math.round((ed.getTime() - sd.getTime()) / 86400000) + 1;
   const locale = form.locale ?? "es";
+  const lang = locale === "es" ? "Spanish" : locale === "fr" ? "French" : locale === "de" ? "German" : locale === "pt" ? "Portuguese" : locale === "it" ? "Italian" : "English";
 
   const dateStr = sd.toLocaleDateString(locale === "es" ? "es-ES" : locale, {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -14,50 +15,123 @@ export function buildItineraryPrompt(form: TripFormData): string {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
 
-  return `You are an expert travel planner with deep local knowledge. Generate a COMPLETE, DETAILED tourist itinerary.
-Respond ONLY in ${locale === "es" ? "Spanish" : locale === "fr" ? "French" : locale === "de" ? "German" : locale === "pt" ? "Portuguese" : locale === "it" ? "Italian" : "English"}.
+  const startMonth = sd.toLocaleString("en", { month: "long" });
+  const firstDayLabel = sd.toLocaleDateString(locale === "es" ? "es-ES" : locale, {
+    weekday: "long", day: "numeric", month: "long",
+  });
 
-Trip details:
-- City: ${form.city}, ${form.country}
+  return `You are a local travel expert for ${form.city}, ${form.country}. Generate a realistic tourist itinerary in ${lang}.
+
+TRIP:
+- Destination: ${form.city}, ${form.country}
 - Dates: ${dateStr} to ${dateEndStr} (${days} days)
 - Travelers: ${form.travelers} (${form.travelerType})
 - Budget: ${form.budget}
 - Interests: ${form.interests.join(", ")}
 
-CRITICAL RULES — MUST FOLLOW:
-1. RESTAURANTS: Only suggest restaurants that ACTUALLY EXIST in ${form.city}, ${form.country}. Do NOT invent names. Use well-known local establishments. Each restaurant must be located in ${form.city} specifically.
-2. ATTRACTIONS: Schedule visits respecting real opening hours. Museums typically open 09:00-18:00. Restaurants: lunch 12:00-15:00, dinner 19:00-23:00. Bars/nightlife after 20:00. Do NOT schedule a museum visit at 20:00 or a restaurant at 07:00.
-3. EVENTS: Only include events that realistically could occur during ${dateStr} to ${dateEndStr}. Do NOT invent specific dated events.
-4. BUDGET: Prices must be realistic for ${form.city}, ${form.country} and consistent with the "${form.budget}" budget level.
-5. TRANSPORT: Walking times between places must be geographically realistic for ${form.city}.
+=== ABSOLUTE RULES — NEVER VIOLATE ===
 
-Respond ONLY with valid JSON (no backticks, no markdown, no comments). Use exactly this schema:
+RULE 1 — REAL OPENING HOURS (apply to every single item in every day):
+
+MUSEUMS & CULTURAL SITES:
+- Typical hours: 09:00 to 17:00 or 18:00
+- Last entry usually 1 hour before closing
+- NEVER schedule a museum visit starting after 16:00
+- NEVER schedule a museum visit ending after 18:00
+
+CHURCHES & CATHEDRALS:
+- Typical hours: 07:00 to 12:00 and 15:00 to 18:00
+- Avoid scheduling during midday (12:00–15:00) when many close
+
+MARKETS:
+- Morning markets: 06:00 to 13:00
+- NEVER schedule a morning market after 12:00
+
+RESTAURANTS — LUNCH:
+- Only between 12:00 and 15:30
+- NEVER schedule lunch at 10:00 or 17:00
+
+RESTAURANTS — DINNER:
+- Only between 19:00 and 23:00
+- NEVER schedule dinner at 16:00 or 18:00
+
+CAFES & BREAKFAST:
+- 07:00 to 11:00
+
+PARKS & OUTDOOR ATTRACTIONS:
+- Any time between 06:00 and 20:00
+- Avoid after dark unless specifically a night attraction
+
+BARS & NIGHTLIFE:
+- Only after 20:00, ideally 21:00–02:00
+
+SHOPPING / MALLS:
+- 10:00 to 20:00
+
+TOURS & EXCURSIONS:
+- Morning: start 08:00–10:00
+- Afternoon: start 14:00–15:00
+- NEVER start a long tour after 16:00
+
+A CORRECT DAY LOOKS LIKE THIS:
+08:00 — Breakfast at a café
+09:30 — Visit museum or attraction (arrives before 10:00, leaves by 12:00)
+12:30 — Lunch at a local restaurant
+14:30 — Visit another attraction or neighborhood walk
+17:00 — Relaxing activity, park, viewpoint, shopping
+19:30 — Aperitif or drinks
+21:00 — Dinner at a restaurant
+
+AN INCORRECT DAY (NEVER DO THIS):
+18:00 — Museum visit ← WRONG, museum is closing
+20:00 — Lunch ← WRONG, too late for lunch
+07:00 — Dinner ← WRONG, too early for dinner
+
+RULE 2 — RESTAURANTS MUST BE IN ${form.city}:
+- Every restaurant must physically exist in ${form.city}, ${form.country}
+- NEVER suggest restaurants from other cities or countries
+- NEVER invent restaurant names
+- Only suggest restaurants you are certain exist in ${form.city}
+- If unsure, describe generically: "traditional local restaurant in [neighborhood of ${form.city}]"
+
+RULE 3 — EVENTS MUST MATCH THE TRAVEL MONTH (${startMonth}):
+- Only include events that actually happen in ${startMonth} in ${form.city}
+- DO NOT include annual festivals that occur in other months
+- Example: if travel is in May, do NOT suggest a December festival
+- If no confirmed events exist for ${startMonth}, use permanent attractions only and leave events array as []
+
+RULE 4 — GEOGRAPHY:
+- All places must be located in ${form.city}, ${form.country}
+- Walking/transport times must be geographically realistic
+
+=== END RULES ===
+
+Respond ONLY with valid JSON. No markdown, no backticks, no comments outside the JSON:
 
 {
   "city": "${form.city}",
   "country": "${form.country}",
-  "tagline": "inspiring phrase max 10 words",
+  "tagline": "short inspiring phrase max 10 words",
   "summary": "2-sentence trip overview",
   "weather": {
-    "maxTemp": 27,
+    "maxTemp": 28,
     "minTemp": 18,
-    "seaTemp": 24,
-    "description": "sunny Mediterranean summer"
+    "description": "warm and sunny"
   },
-  "estimatedBudgetPerDay": "€80–130",
+  "estimatedBudgetPerDay": "COP 250.000–400.000",
   "days": [
     {
       "dayNum": 1,
-      "theme": "Day theme",
-      "date": "Sunday, July 12",
-      "zone": "Main zones / neighborhoods",
+      "theme": "day theme",
+      "date": "${firstDayLabel}",
+      "zone": "main neighborhood visited",
       "items": [
         {
           "id": "d1i1",
           "time": "09:00",
           "type": "sight|food|transport|event|alert|beach|night",
-          "name": "Place or activity name — must exist in ${form.city}",
-          "description": "Useful tourist description in 2 sentences",
+          "name": "name of place — must exist and be open at this time in ${form.city}",
+          "description": "2-sentence description with practical info",
           "duration": "1h 30min",
           "transport": "walking / metro / bus / taxi",
           "transportTime": "10 min",
@@ -70,7 +144,7 @@ Respond ONLY with valid JSON (no backticks, no markdown, no comments). Use exact
   ],
   "restaurants": [
     {
-      "name": "Real restaurant name that exists in ${form.city}",
+      "name": "real restaurant name in ${form.city}",
       "type": "cuisine type",
       "priceRange": "$ / $$ / $$$ / $$$$",
       "rating": "4.3",
@@ -80,31 +154,16 @@ Respond ONLY with valid JSON (no backticks, no markdown, no comments). Use exact
       "address": "real street address in ${form.city} if known"
     }
   ],
-  "events": [
-    {
-      "name": "event name",
-      "type": "festival|concert|permanent|sport|market|cinema",
-      "when": "dates or 'permanent'",
-      "description": "brief description",
-      "price": "free / approximate price",
-      "venue": "venue name in ${form.city}"
-    }
-  ],
+  "events": [],
   "alerts": [
     {
       "level": "alto|medio|bajo",
-      "zone": "zone name in ${form.city}",
-      "description": "what to watch out for",
-      "tip": "practical safety tip"
+      "zone": "zone in ${form.city}",
+      "description": "safety note",
+      "tip": "practical tip"
     }
   ]
 }
 
-Additional rules:
-- Include 6-8 activities per day, distributed from 08:00 to 22:00 respecting real business hours
-- Group nearby attractions to minimize travel time
-- ALL restaurants must be real businesses located in ${form.city}, ${form.country}
-- Include at least 2-3 restaurants per price tier matching the "${form.budget}" budget
-- Alerts must be realistic for ${form.city}
-- The JSON must be strictly valid`;
+Include 6-8 items per day. Every item's time must respect the opening hours listed above.`;
 }
