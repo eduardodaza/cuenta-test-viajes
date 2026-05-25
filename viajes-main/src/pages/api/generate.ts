@@ -12,56 +12,60 @@ function extractJSON(text: string): string {
   return s;
 }
 
-// ── Hotel links — sin API, gratuito ──────────────────────────
+// ── Hotel links — deep-links con ciudad + fechas + huéspedes ──
+// Todas las plataformas abren YA con los datos pre-cargados.
 
 function buildHotelLinks(form: TripFormData): Hotel[] {
-  const query = encodeURIComponent(`${form.city}, ${form.country}`);
-  const city  = encodeURIComponent(form.city);
-  const ctry  = encodeURIComponent(form.country);
-  const cin   = form.startDate;
-  const cout  = form.endDate;
-  const adults = form.travelers;
+  const cityCountry = `${form.city}, ${form.country}`;
+  const q       = encodeURIComponent(cityCountry);
+  const cityEnc = encodeURIComponent(form.city);
+  const cin     = form.startDate;             // YYYY-MM-DD
+  const cout    = form.endDate;               // YYYY-MM-DD
+  const adults  = Math.max(1, Number(form.travelers) || 1);
+
+  const base = {
+    stars: 0, reviewScore: 0, reviewCount: 0,
+    pricePerNight: "Ver precios", currency: "",
+    address: cityCountry,
+  };
 
   return [
     {
+      ...base,
       name: `Hoteles en ${form.city} — Booking.com`,
-      stars: 0, reviewScore: 0, reviewCount: 0,
-      pricePerNight: "Ver precios", currency: "",
-      address: `${form.city}, ${form.country}`,
       platform: "Booking.com",
-      url: `https://www.booking.com/searchresults.html?ss=${query}&checkin=${cin}&checkout=${cout}&group_adults=${adults}&selected_currency=USD`,
+      url: `https://www.booking.com/searchresults.html?ss=${q}&checkin=${cin}&checkout=${cout}&group_adults=${adults}&no_rooms=1&group_children=0&selected_currency=USD`,
     },
     {
+      ...base,
       name: `Hoteles en ${form.city} — Hotels.com`,
-      stars: 0, reviewScore: 0, reviewCount: 0,
-      pricePerNight: "Ver precios", currency: "",
-      address: `${form.city}, ${form.country}`,
       platform: "Hotels.com",
-      url: `https://www.hotels.com/search.do?q-destination=${query}&q-check-in=${cin}&q-check-out=${cout}&q-rooms=1&q-room-0-adults=${adults}`,
+      url: `https://www.hotels.com/Hotel-Search?destination=${q}&startDate=${cin}&endDate=${cout}&rooms=1&adults=${adults}`,
     },
     {
+      ...base,
       name: `Hoteles en ${form.city} — Expedia`,
-      stars: 0, reviewScore: 0, reviewCount: 0,
-      pricePerNight: "Ver precios", currency: "",
-      address: `${form.city}, ${form.country}`,
       platform: "Expedia",
-      url: `https://www.expedia.com/Hotel-Search?destination=${query}&startDate=${cin}&endDate=${cout}&adults=${adults}`,
+      url: `https://www.expedia.com/Hotel-Search?destination=${q}&startDate=${cin}&endDate=${cout}&rooms=1&adults=${adults}`,
     },
     {
-      name: `Hoteles en ${form.city} — Hostelworld`,
-      stars: 0, reviewScore: 0, reviewCount: 0,
-      pricePerNight: "Ver precios", currency: "",
-      address: `${form.city}, ${form.country}`,
-      platform: "Hostelworld",
-      url: `https://www.hostelworld.com/findabed.php/ChosenCity.${city}/ChosenCountry.${ctry}/DateFrom.${cin}/DateTo.${cout}/number_of_guests.${adults}`,
+      ...base,
+      name: `Hoteles en ${form.city} — Airbnb`,
+      platform: "Airbnb",
+      url: `https://www.airbnb.com/s/${cityEnc}/homes?checkin=${cin}&checkout=${cout}&adults=${adults}`,
     },
     {
-      name: `Hoteles en ${form.city} — TripAdvisor`,
-      stars: 0, reviewScore: 0, reviewCount: 0,
-      pricePerNight: "Ver precios", currency: "",
-      address: `${form.city}, ${form.country}`,
-      platform: "TripAdvisor",
-      url: `https://www.tripadvisor.com/Search?q=${query}+hotels`,
+      ...base,
+      name: `Hoteles en ${form.city} — Trivago`,
+      platform: "Trivago",
+      // Trivago acepta fechas/huéspedes en query — usa el buscador estándar
+      url: `https://www.trivago.com/en-US/srl?search=200-${cityEnc}&aDateRange%5Barr%5D=${cin}&aDateRange%5Bdep%5D=${cout}&aRooms%5B0%5D%5Badults%5D=${adults}`,
+    },
+    {
+      ...base,
+      name: `Hoteles en ${form.city} — Kayak`,
+      platform: "Kayak",
+      url: `https://www.kayak.com/hotels/${cityEnc}/${cin}/${cout}/${adults}adults`,
     },
   ];
 }
@@ -143,7 +147,7 @@ async function fetchWeather(city: string, country: string) {
   } catch { return null; }
 }
 
-// ── Ticketmaster ──────────────────────────────────────────────
+// ── Ticketmaster (conciertos, deportes, festivales) ───────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fetchTicketmaster(city: string, startDate: string, endDate: string): Promise<any[]> {
@@ -151,24 +155,86 @@ async function fetchTicketmaster(city: string, startDate: string, endDate: strin
   if (!key) return [];
   try {
     const res = await fetch(
-      `https://app.ticketmaster.com/discovery/v2/events.json?city=${encodeURIComponent(city)}&startDateTime=${startDate}T00:00:00Z&endDateTime=${endDate}T23:59:59Z&size=8&apikey=${key}`
+      `https://app.ticketmaster.com/discovery/v2/events.json?city=${encodeURIComponent(city)}&startDateTime=${startDate}T00:00:00Z&endDateTime=${endDate}T23:59:59Z&size=20&sort=date,asc&apikey=${key}`
     );
     const data = await res.json();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (data?._embedded?.events ?? []).map((ev: any) => ({
-      name:        ev.name ?? "",
-      type:        ev.classifications?.[0]?.segment?.name === "Music" ? "concert" : "festival",
-      when:        ev.dates?.start?.localDate ?? startDate,
-      description: ev.info ?? ev.pleaseNote ?? "",
-      price:       ev.priceRanges?.[0]?.min ? `From $${ev.priceRanges[0].min}` : "See website",
-      venue:       ev._embedded?.venues?.[0]?.name ?? "",
-      ticketUrl:   ev.url ?? "",
-      source:      "Ticketmaster",
-    }));
+    return (data?._embedded?.events ?? []).map((ev: any) => {
+      const segment = ev.classifications?.[0]?.segment?.name ?? "";
+      let type: string = "festival";
+      if (segment === "Music")  type = "concert";
+      if (segment === "Sports") type = "sport";
+      if (segment === "Arts & Theatre") type = "show";
+      return {
+        name:        ev.name ?? "",
+        type,
+        when:        ev.dates?.start?.localDate ?? startDate,
+        description: ev.info ?? ev.pleaseNote ?? `${segment} event in ${city}`,
+        price:       ev.priceRanges?.[0]?.min ? `From $${ev.priceRanges[0].min}` : "See website",
+        venue:       ev._embedded?.venues?.[0]?.name ?? "",
+        ticketUrl:   ev.url ?? "",
+        source:      "Ticketmaster",
+      };
+    });
   } catch { return []; }
 }
 
-// ── Eventbrite ────────────────────────────────────────────────
+// ── RapidAPI: Real-Time Events Search (Google Events) ─────────
+// Fuente gratuita amplia: conciertos, ferias, partidos, eventos locales
+// scrapeados desde Google Events. Tier free en RapidAPI.
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchRapidEvents(city: string, country: string, startDate: string, endDate: string): Promise<any[]> {
+  const key = process.env.RAPIDAPI_KEY;
+  if (!key) return [];
+  try {
+    const query = encodeURIComponent(`events in ${city} ${country}`);
+    const res = await fetch(
+      `https://real-time-events-search.p.rapidapi.com/search-events?query=${query}&date=month&is_virtual=false&start=0`,
+      {
+        headers: {
+          "x-rapidapi-key":  key,
+          "x-rapidapi-host": "real-time-events-search.p.rapidapi.com",
+        },
+      }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const start = new Date(startDate).getTime();
+    const end   = new Date(endDate).getTime() + 24 * 3600 * 1000;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (data?.data ?? [])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((ev: any) => {
+        const iso = ev.start_time ?? ev.start_time_utc ?? "";
+        const when = iso ? iso.split("T")[0] : startDate;
+        const ts = iso ? new Date(iso).getTime() : NaN;
+        const tags: string[] = (ev.tags ?? []).map((x: string) => x.toLowerCase());
+        let type = "festival";
+        if (tags.some(t => t.includes("concert") || t.includes("music"))) type = "concert";
+        else if (tags.some(t => t.includes("sport") || t.includes("game"))) type = "sport";
+        else if (tags.some(t => t.includes("fair")  || t.includes("festival"))) type = "festival";
+        else if (tags.some(t => t.includes("art")   || t.includes("theatre") || t.includes("theater"))) type = "show";
+        return {
+          name:        ev.name ?? "",
+          type,
+          when,
+          ts,
+          description: (ev.description ?? "").slice(0, 200),
+          price:       ev.ticket_links?.length ? "See website" : "Free / See website",
+          venue:       ev.venue?.name ?? ev.venue?.full_address ?? "",
+          ticketUrl:   ev.link ?? ev.ticket_links?.[0]?.link ?? "",
+          source:      "Google Events",
+        };
+      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .filter((ev: any) => ev.name && (!ev.ts || isNaN(ev.ts) || (ev.ts >= start && ev.ts <= end)))
+      .slice(0, 15);
+  } catch { return []; }
+}
+
+// ── Eventbrite (legacy — la mayoría de keys ya no pueden buscar) ─
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fetchEventbrite(city: string, startDate: string, endDate: string): Promise<any[]> {
@@ -179,6 +245,7 @@ async function fetchEventbrite(city: string, startDate: string, endDate: string)
       `https://www.eventbriteapi.com/v3/events/search/?q=${encodeURIComponent(city)}&start_date.range_start=${startDate}T00:00:00Z&start_date.range_end=${endDate}T23:59:59Z&expand=venue&page_size=5&sort_by=date`,
       { headers: { Authorization: `Bearer ${key}` } }
     );
+    if (!res.ok) return [];
     const data = await res.json();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (data?.events ?? []).filter((ev: any) => ev.name?.text).map((ev: any) => ({
@@ -232,7 +299,6 @@ async function enrichWithGeoapify(itinerary: ItineraryData, form: TripFormData) 
     );
     const poiData = await poiRes.json();
     if (itinerary.days?.[0]) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const place of (poiData?.features ?? []).slice(0, 3)) {
         const props = place.properties;
         const name = props?.name;
@@ -273,8 +339,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     // ── 1. Groq — core itinerary ──────────────────────────────
     const prompt = buildItineraryPrompt(form);
-    let rawText  = await callGroq(prompt, 6000);
-    let jsonStr  = extractJSON(rawText);
+    const rawText = await callGroq(prompt, 6000);
+    const jsonStr = extractJSON(rawText);
 
     let itinerary: ItineraryData;
     try {
@@ -290,15 +356,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     itinerary.alerts      = itinerary.alerts      ?? [];
     itinerary.restaurants = itinerary.restaurants ?? [];
 
-    // ── 2. Hotels — links directos sin API ───────────────────
+    // ── 2. Hotels — deep-links con fechas/ciudad/huéspedes ───
     itinerary.hotels = buildHotelLinks(form);
 
     // ── 3. Parallel enrichment ────────────────────────────────
-    const [wikidataRes, weatherRes, tmRes, ebRes] = await Promise.allSettled([
+    const [wikidataRes, weatherRes, tmRes, ebRes, rapidRes] = await Promise.allSettled([
       fetchWikidataAttractions(form.city),
       fetchWeather(form.city, form.country),
       fetchTicketmaster(form.city, form.startDate, form.endDate),
       fetchEventbrite(form.city, form.startDate, form.endDate),
+      fetchRapidEvents(form.city, form.country, form.startDate, form.endDate),
     ]);
 
     // ── 4. Wikidata descriptions ──────────────────────────────
@@ -323,36 +390,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       itinerary.weather = { ...itinerary.weather, ...weatherRes.value };
     }
 
-    // ── 6. Ticketmaster events ────────────────────────────────
-    if (tmRes.status === "fulfilled") {
-      const seen = new Set(itinerary.events.map(e => e.name.toLowerCase()));
-      for (const ev of tmRes.value) {
-        if (!seen.has(ev.name.toLowerCase())) {
-          itinerary.events.unshift(ev);
-          seen.add(ev.name.toLowerCase());
-        }
+    // ── 6/7/8. Merge events from all sources (dedupe by name) ─
+    const seen = new Set(itinerary.events.map(e => e.name.toLowerCase().trim()));
+    const pushEvents = (arr: unknown) => {
+      if (!Array.isArray(arr)) return;
+      for (const ev of arr) {
+        const key = (ev?.name ?? "").toLowerCase().trim();
+        if (!key || seen.has(key)) continue;
+        itinerary.events.push(ev);
+        seen.add(key);
       }
-    }
+    };
+    if (tmRes.status    === "fulfilled") pushEvents(tmRes.value);
+    if (rapidRes.status === "fulfilled") pushEvents(rapidRes.value);
+    if (ebRes.status    === "fulfilled") pushEvents(ebRes.value);
 
-    // ── 7. Eventbrite events ──────────────────────────────────
-    if (ebRes.status === "fulfilled") {
-      const seen = new Set(itinerary.events.map(e => e.name.toLowerCase()));
-      for (const ev of ebRes.value) {
-        if (!seen.has(ev.name.toLowerCase())) {
-          itinerary.events.push(ev);
-          seen.add(ev.name.toLowerCase());
-        }
-      }
-    }
+    // Ordenar por fecha asc
+    itinerary.events.sort((a, b) => (a.when ?? "").localeCompare(b.when ?? ""));
 
-    // ── 8. Google Places ratings ──────────────────────────────
+    // ── 9. Google Places ratings ──────────────────────────────
     await enrichRestaurantRatings(itinerary.restaurants, form.city);
 
-    // ── 9. Geoapify POIs ──────────────────────────────────────
+    // ── 10. Geoapify POIs ─────────────────────────────────────
     await enrichWithGeoapify(itinerary, form);
 
-    // ── 10. Source tag ────────────────────────────────────────
-    itinerary.generatedBy = "Groq LLaMA 3.3 70B · Wikidata · Ticketmaster · Eventbrite";
+    // ── 11. Source tag ────────────────────────────────────────
+    itinerary.generatedBy = "Groq LLaMA 3.3 70B · Ticketmaster · Google Events · Wikidata";
 
     return res.status(200).json(itinerary);
 
