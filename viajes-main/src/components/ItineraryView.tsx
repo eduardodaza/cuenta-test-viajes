@@ -168,8 +168,9 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
                   "Booking.com":  { bg: "#003580", color: "white",   border: "#003580" },
                   "Hotels.com":   { bg: "#d32d20", color: "white",   border: "#d32d20" },
                   "Expedia":      { bg: "#1a1aff", color: "white",   border: "#1a1aff" },
-                  "Hostelworld":  { bg: "#ff6600", color: "white",   border: "#ff6600" },
-                  "TripAdvisor":  { bg: "#00af87", color: "white",   border: "#00af87" },
+                  "Airbnb":       { bg: "#ff385c", color: "white",   border: "#ff385c" },
+                  "Trivago":      { bg: "#c8102e", color: "white",   border: "#c8102e" },
+                  "Kayak":        { bg: "#ff690f", color: "white",   border: "#ff690f" },
                 };
                 const pc = platformColors[hotel.platform ?? ""] ?? { bg: "#1a6b4a", color: "white", border: "#1a6b4a" };
                 return (
