@@ -76,7 +76,6 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
             {data.summary}
           </p>
         )}
-
         {data.cityWikipediaExtract && (
           <p style={{ fontSize: 12, color: "#888", lineHeight: 1.6, margin: "8px 0 0", fontStyle: "italic" }}>
             {data.cityWikipediaExtract}
@@ -107,8 +106,7 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
               background: tab === tb.key ? "#1a6b4a" : "white",
               color: tab === tb.key ? "white" : "#555",
               transition: "all 0.15s",
-            }}
-          >
+            }}>
             {tb.label}
           </button>
         ))}
@@ -117,8 +115,7 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
       {/* ── DAYS ── */}
       {tab === "days" && data.days?.map((day, di) => (
         <DayCard key={di} day={day} index={di} open={openDays.has(di)}
-          onToggle={() => toggleDay(di)} edits={edits} onEdit={openEdit}
-          locale={locale} />
+          onToggle={() => toggleDay(di)} edits={edits} onEdit={openEdit} locale={locale} />
       ))}
 
       {/* ── RESTAURANTS ── */}
@@ -130,7 +127,7 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
       {tab === "events" && (
         <div className="card">
           <h3 style={{ fontSize: 15, fontWeight: 500, marginBottom: 12 }}>🎭 {t("events", locale)}</h3>
-          {data.events?.map((ev, i) => (
+          {data.events?.length ? data.events.map((ev, i) => (
             <div key={i} style={{ padding: "10px 0", borderBottom: i < data.events.length - 1 ? "1px solid #f0efea" : "none", display: "flex", gap: 10 }}>
               <div style={{ width: 8, height: 8, borderRadius: "50%", background: ev.type === "concert" ? "#e85d26" : ev.type === "permanent" ? "#1a6b4a" : "#7f77dd", marginTop: 5, flexShrink: 0 }} />
               <div style={{ flex: 1 }}>
@@ -149,7 +146,11 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
                 </div>
               </div>
             </div>
-          ))}
+          )) : (
+            <div style={{ textAlign: "center", color: "#888", padding: "1.5rem 0", fontSize: 13 }}>
+              No se encontraron eventos publicados para estas fechas.
+            </div>
+          )}
         </div>
       )}
 
@@ -165,27 +166,20 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               {data.hotels.map((hotel, i) => {
                 const platformColors: Record<string, { bg: string; color: string; border: string }> = {
-                  "Booking.com":  { bg: "#003580", color: "white",   border: "#003580" },
-                  "Hotels.com":   { bg: "#d32d20", color: "white",   border: "#d32d20" },
-                  "Expedia":      { bg: "#1a1aff", color: "white",   border: "#1a1aff" },
-                  "Airbnb":       { bg: "#ff385c", color: "white",   border: "#ff385c" },
-                  "Trivago":      { bg: "#c8102e", color: "white",   border: "#c8102e" },
-                  "Kayak":        { bg: "#ff690f", color: "white",   border: "#ff690f" },
+                  "Booking.com":  { bg: "#003580", color: "white", border: "#003580" },
+                  "Hotels.com":   { bg: "#d32d20", color: "white", border: "#d32d20" },
+                  "Expedia":      { bg: "#1a1aff", color: "white", border: "#1a1aff" },
+                  "Airbnb":       { bg: "#ff385c", color: "white", border: "#ff385c" },
+                  "Trivago":      { bg: "#c8102e", color: "white", border: "#c8102e" },
+                  "Kayak":        { bg: "#ff690f", color: "white", border: "#ff690f" },
                 };
                 const pc = platformColors[hotel.platform ?? ""] ?? { bg: "#1a6b4a", color: "white", border: "#1a6b4a" };
                 return (
-                  <a key={i} href={hotel.url} target="_blank" rel="noopener noreferrer"
-                    style={{ textDecoration: "none", display: "block" }}>
+                  <a key={i} href={hotel.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none", display: "block" }}>
                     <div style={{ border: `2px solid ${pc.border}`, borderRadius: 12, padding: "14px 16px", background: "white", transition: "transform 0.15s", cursor: "pointer" }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: pc.bg, marginBottom: 4 }}>
-                        {hotel.platform ?? hotel.name}
-                      </div>
-                      <div style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>
-                        {data.city}, {data.country}
-                      </div>
-                      <div style={{ background: pc.bg, color: pc.color, borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 500, textAlign: "center" }}>
-                        Buscar hoteles ↗
-                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: pc.bg, marginBottom: 4 }}>{hotel.platform ?? hotel.name}</div>
+                      <div style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>{data.city}, {data.country}</div>
+                      <div style={{ background: pc.bg, color: pc.color, borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 500, textAlign: "center" }}>Buscar hoteles ↗</div>
                     </div>
                   </a>
                 );
@@ -258,7 +252,6 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
         </div>
       )}
 
-      {/* Generated by */}
       {data.generatedBy && (
         <div style={{ fontSize: 10, color: "#ccc", textAlign: "center", marginTop: 16 }}>
           {data.generatedBy}
@@ -269,7 +262,6 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
 }
 
 // ── DayCard ───────────────────────────────────────────────────
-
 function DayCard({ day, index, open, onToggle, edits, onEdit, locale }: {
   day: ItineraryDay; index: number; open: boolean;
   onToggle: () => void; edits: UserEdits;
@@ -303,19 +295,11 @@ function DayCard({ day, index, open, onToggle, edits, onEdit, locale }: {
               <div style={{ fontSize: 13, fontWeight: 500, color: "#1a1a18", marginBottom: 2 }}>{name}</div>
               <div style={{ fontSize: 12, color: "#666", lineHeight: 1.5 }}>{item.description}</div>
 
-              {/* Wikidata description */}
               {item.wikidataDescription && (
-                <div style={{ fontSize: 11, color: "#777", marginTop: 4, fontStyle: "italic", lineHeight: 1.5 }}>
-                  📖 {item.wikidataDescription}
-                </div>
+                <div style={{ fontSize: 11, color: "#777", marginTop: 4, fontStyle: "italic", lineHeight: 1.5 }}>📖 {item.wikidataDescription}</div>
               )}
-
-              {edit.note && (
-                <div style={{ fontSize: 11, color: "#1a6b4a", marginTop: 4, padding: "4px 8px", background: "#e8f5ef", borderRadius: 6 }}>📝 {edit.note}</div>
-              )}
-              {item.tip && (
-                <div style={{ fontSize: 11, color: "#3c3489", marginTop: 4, padding: "3px 8px", background: "#eeedfe", borderRadius: 6 }}>💡 {item.tip}</div>
-              )}
+              {edit.note && (<div style={{ fontSize: 11, color: "#1a6b4a", marginTop: 4, padding: "4px 8px", background: "#e8f5ef", borderRadius: 6 }}>📝 {edit.note}</div>)}
+              {item.tip && (<div style={{ fontSize: 11, color: "#3c3489", marginTop: 4, padding: "3px 8px", background: "#eeedfe", borderRadius: 6 }}>💡 {item.tip}</div>)}
 
               <div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
                 {item.duration && <span style={{ fontSize: 11, color: "#888" }}>⏱ {item.duration}</span>}
@@ -324,33 +308,12 @@ function DayCard({ day, index, open, onToggle, edits, onEdit, locale }: {
                 {item.price && <span style={{ fontSize: 11, color: "#1a6b4a", fontWeight: 500 }}>{item.price}</span>}
               </div>
 
-              {/* Links para atracciones */}
               {isSight && item.links && (
                 <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                  {item.links.googleMaps && (
-                    <a href={item.links.googleMaps} target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
-                      🗺 Maps
-                    </a>
-                  )}
-                  {item.links.tripAdvisor && (
-                    <a href={item.links.tripAdvisor} target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
-                      ⭐ TripAdvisor
-                    </a>
-                  )}
-                  {item.links.wikipedia && (
-                    <a href={item.links.wikipedia} target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
-                      📚 Wikipedia
-                    </a>
-                  )}
-                  {item.viatorUrl && (
-                    <a href={item.viatorUrl} target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #e85d26", borderRadius: 6, textDecoration: "none", color: "#e85d26", background: "#fdf0eb" }}>
-                      🎫 Reservar tour
-                    </a>
-                  )}
+                  {item.links.googleMaps && (<a href={item.links.googleMaps} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>🗺 Maps</a>)}
+                  {item.links.tripAdvisor && (<a href={item.links.tripAdvisor} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>⭐ TripAdvisor</a>)}
+                  {item.links.wikipedia && (<a href={item.links.wikipedia} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>📚 Wikipedia</a>)}
+                  {item.viatorUrl && (<a href={item.viatorUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #e85d26", borderRadius: 6, textDecoration: "none", color: "#e85d26", background: "#fdf0eb" }}>🎫 Reservar tour</a>)}
                 </div>
               )}
 
@@ -367,7 +330,6 @@ function DayCard({ day, index, open, onToggle, edits, onEdit, locale }: {
 }
 
 // ── RestaurantsPanel ──────────────────────────────────────────
-
 function RestaurantsPanel({ restaurants, locale, city }: { restaurants: ItineraryData["restaurants"]; locale: Locale; city: string }) {
   const tiers = ["$", "$$", "$$$", "$$$$"] as const;
   const tierLabels: Record<string, string> = {
@@ -375,7 +337,6 @@ function RestaurantsPanel({ restaurants, locale, city }: { restaurants: Itinerar
     "$$$": t("premium", locale), "$$$$": t("lujo", locale),
   };
 
-  // Mostrar todos agrupados por tier; si el tier no coincide exactamente, mostrar igual
   const all = restaurants ?? [];
   const byTier: Record<string, typeof all> = { "$": [], "$$": [], "$$$": [], "$$$$": [], other: [] };
   for (const r of all) {
@@ -383,12 +344,9 @@ function RestaurantsPanel({ restaurants, locale, city }: { restaurants: Itinerar
     if (byTier[key]) byTier[key].push(r);
     else byTier["other"].push(r);
   }
-  // Juntar "other" con "$" para no perder ninguno
   byTier["$"] = [...byTier["$"], ...byTier["other"]];
 
-  const hasAny = all.length > 0;
-
-  if (!hasAny) {
+  if (!all.length) {
     return (
       <div className="card" style={{ textAlign: "center", color: "#888", padding: "2rem" }}>
         <div style={{ fontSize: 32, marginBottom: 8 }}>🍽️</div>
@@ -397,57 +355,88 @@ function RestaurantsPanel({ restaurants, locale, city }: { restaurants: Itinerar
     );
   }
 
+  // Helpers para deep-links que SIEMPRE caen en el restaurante correcto
+  const q = (s: string) => encodeURIComponent(s.trim());
+  // Para portales tipo TheFork/Yelp el truco más robusto es usar Google
+  // con "I'm feeling lucky" simulado (site:dominio + nombre + ciudad).
+  const luckySearch = (site: string, name: string) =>
+    `https://www.google.com/search?q=${q(`site:${site} ${name} ${city}`)}`;
+
   return (
     <>
       {tiers.map(tier => {
         const list = byTier[tier] ?? [];
         if (!list.length) return null;
+
+        // Ruta sugerida del día: encadena los restaurantes del tier en Google Maps
+        const routeWaypoints = list
+          .map(r => `${r.name} ${r.address ?? ""} ${city}`.trim())
+          .map(q).join("/");
+        const routeUrl = `https://www.google.com/maps/dir/${routeWaypoints}`;
+
         return (
           <div key={tier} className="card" style={{ marginBottom: 10 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 500, marginBottom: 10 }}>
-              {tier} · {tierLabels[tier]}
-            </h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {list.map((r, i) => (
-                <div key={i} style={{ border: "1px solid #f0efea", borderRadius: 10, padding: "10px 12px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: "#1a1a18" }}>{r.name}</div>
-                    <span style={{ fontSize: 11, color: "#1a6b4a", fontWeight: 500 }}>{r.priceRange}</span>
-                  </div>
-                  <div style={{ fontSize: 11, color: "#888", marginTop: 1 }}>{r.type}</div>
-                  <div style={{ display: "flex", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 11, color: "#854f0b" }}>★ {r.rating}</span>
-                    {r.zone && <span style={{ fontSize: 11, color: "#888" }}>📍 {r.zone}</span>}
-                  </div>
-                  {r.specialty && <div style={{ fontSize: 11, color: "#666", marginTop: 3 }}>✦ {r.specialty}</div>}
-                  {r.address && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>🏠 {r.address}</div>}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 500, margin: 0 }}>{tier} · {tierLabels[tier]}</h3>
+              {list.length >= 2 && (
+                <a href={routeUrl} target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: 10, padding: "3px 10px", background: "#1a6b4a", color: "white", borderRadius: 12, textDecoration: "none", fontWeight: 500 }}>
+                  🛣 Ruta sugerida ↗
+                </a>
+              )}
+            </div>
 
-                  {/* Links de restaurante */}
-                  <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                    <a href={`https://www.google.com/maps/search/${encodeURIComponent(r.name + " " + (r.zone ?? "") + " " + (r.address ?? ""))}`}
-                      target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
-                      🗺 Maps
-                    </a>
-                    <a href={`https://www.tripadvisor.com/Search?q=${encodeURIComponent(r.name + " " + city)}`}
-                      target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
-                      ⭐ TripAdvisor
-                    </a>
-                    <a href={`https://www.yelp.com/search?find_desc=${encodeURIComponent(r.name)}&find_loc=${encodeURIComponent(city)}`}
-                      target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
-                      🍴 Yelp
-                    </a>
-                    <a href={`https://www.thefork.com/search?q=${encodeURIComponent(r.name + " " + city)}`}
-                      target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #00848a", borderRadius: 6, textDecoration: "none", color: "#00848a", background: "#f0fafa" }}>
-                      🍽 TheFork
-                    </a>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {list.map((r, i) => {
+                // r.website y r.googleMapsUrl llegan de Google Places cuando hay key
+                const website = (r as { website?: string }).website;
+                const gMapsUrl = (r as { googleMapsUrl?: string }).googleMapsUrl
+                  ?? `https://www.google.com/maps/search/?api=1&query=${q(`${r.name} ${r.address ?? ""} ${city}`)}`;
+                const reviewsCount = (r as { reviewsCount?: number }).reviewsCount;
+
+                return (
+                  <div key={i} style={{ border: "1px solid #f0efea", borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: "#1a1a18" }}>{r.name}</div>
+                      <span style={{ fontSize: 11, color: "#1a6b4a", fontWeight: 500 }}>{r.priceRange}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: "#888", marginTop: 1 }}>{r.type}</div>
+                    <div style={{ display: "flex", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
+                      {r.rating && <span style={{ fontSize: 11, color: "#854f0b" }}>★ {r.rating}{reviewsCount ? ` (${reviewsCount})` : ""}</span>}
+                      {r.zone && <span style={{ fontSize: 11, color: "#888" }}>📍 {r.zone}</span>}
+                    </div>
+                    {r.specialty && <div style={{ fontSize: 11, color: "#666", marginTop: 3 }}>✦ {r.specialty}</div>}
+                    {r.address && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>🏠 {r.address}</div>}
+
+                    {/* Botones — todos llegan SIEMPRE al restaurante correcto */}
+                    <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                      <a href={gMapsUrl} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
+                        🗺 Maps
+                      </a>
+                      {website && (
+                        <a href={website} target="_blank" rel="noopener noreferrer"
+                          style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #1a6b4a", borderRadius: 6, textDecoration: "none", color: "#1a6b4a", background: "#e8f5ef", fontWeight: 500 }}>
+                          🌐 Web oficial
+                        </a>
+                      )}
+                      <a href={luckySearch("tripadvisor.com", r.name)} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
+                        ⭐ TripAdvisor
+                      </a>
+                      <a href={luckySearch("yelp.com", r.name)} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>
+                        🍴 Yelp
+                      </a>
+                      <a href={luckySearch("thefork.com", r.name)} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #00848a", borderRadius: 6, textDecoration: "none", color: "#00848a", background: "#f0fafa" }}>
+                        🍽 TheFork
+                      </a>
+                    </div>
+                    {r.source && <div style={{ fontSize: 10, color: "#bbb", marginTop: 6 }}>via {r.source}</div>}
                   </div>
-                  {r.source && <div style={{ fontSize: 10, color: "#bbb", marginTop: 6 }}>via {r.source}</div>}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         );
