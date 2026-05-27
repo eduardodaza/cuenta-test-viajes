@@ -1,7 +1,8 @@
 // src/components/ItineraryView.tsx
 import React, { useState } from "react";
-import type { ItineraryData, ItineraryDay, UserEdits, Locale } from "@/lib/types";
+import type { ItineraryData, ItineraryDay, UserEdits, Locale, TripFormData } from "@/lib/types";
 import { t } from "@/lib/i18n";
+import TravelExtrasTabs from "@/components/TravelExtrasTabs";
 
 const BADGE: Record<string, { label: string; bg: string; color: string }> = {
   sight:     { label: "sight",  bg: "#e8f5ef", color: "#0f6e56" },
@@ -17,10 +18,11 @@ interface Props {
   data: ItineraryData;
   locale: Locale;
   onReset: () => void;
+  form?: TripFormData | null;
 }
 
-export default function ItineraryView({ data, locale, onReset }: Props) {
-  const [tab, setTab] = useState<"days" | "restaurants" | "events" | "hotels" | "security">("days");
+export default function ItineraryView({ data, locale, onReset, form }: Props) {
+  const [tab, setTab] = useState<"days" | "restaurants" | "events" | "hotels" | "extras" | "security">("days");
   const [openDays, setOpenDays] = useState<Set<number>>(new Set([0]));
   const [edits, setEdits] = useState<UserEdits>({});
   const [editModal, setEditModal] = useState<{ id: string; name: string } | null>(null);
@@ -52,6 +54,7 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
     { key: "restaurants", label: `🍽️ ${t("restaurants", locale)}` },
     { key: "events",      label: `🎭 ${t("events", locale)}` },
     { key: "hotels",      label: `🏨 Hotels` },
+    { key: "extras",      label: `✈️ Vuelos · Autos · Tours` },
     { key: "security",    label: `🛡️ ${t("security", locale)}` },
   ];
 
@@ -192,6 +195,17 @@ export default function ItineraryView({ data, locale, onReset }: Props) {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── EXTRAS: Vuelos / Autos / Transporte / Tours ── */}
+      {tab === "extras" && (
+        <TravelExtrasTabs
+          city={form?.city ?? data.city}
+          country={form?.country ?? data.country}
+          from={form?.startDate ?? ""}
+          to={form?.endDate ?? ""}
+          pax={form?.travelers ?? 1}
+        />
       )}
 
       {/* ── SECURITY ── */}
