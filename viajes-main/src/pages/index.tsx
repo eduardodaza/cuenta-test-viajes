@@ -221,7 +221,8 @@ export default function Home() {
         )}
 
         {state === "result" && itinerary && (
-          <ItineraryView data={itinerary} locale={locale} onReset={handleReset} />
+          <ItineraryView data={itinerary} locale={locale} onReset={handleReset} form={lastForm} />
+
         )}
       </div>
     </>
