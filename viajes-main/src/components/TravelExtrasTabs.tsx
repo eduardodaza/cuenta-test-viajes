@@ -1,11 +1,11 @@
 // src/components/TravelExtrasTabs.tsx
 // Drop-in component. Úsalo en la página de resultados del viaje, junto a la lista de hoteles.
 //
-// FIX (beta):
-//   - Los botones de Vuelos (Skyscanner / Google Flights) y Autos (Rentalcars / Kayak)
-//     ahora SIEMPRE se construyen con deep-links válidos a partir de las fechas, ciudad
-//     y número de pasajeros del viaje. Si el backend devuelve una URL, se respeta;
-//     si no, se usa el deep-link generado aquí. Así nunca aterrizan en la home.
+// FIX recurrente (beta):
+//   - Skyscanner solo recibe rutas /transport/flights/... cuando origin/dest son IATA reales.
+//     Si el origen viene como texto libre o placeholder, cae a una página Skyscanner válida del destino.
+//   - Rentalcars usa /search-results con locationName + fechas; evita NaN y formularios vacíos.
+//   - Viator/GetYourGuide siempre reciben fechas y viajeros en la URL final.
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -40,47 +40,174 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 /* ------------------------------ deep-link helpers ------------------------------ */
 // Skyscanner usa YYMMDD en su URL canónica de búsqueda.
 function toYYMMDD(d: string): string {
-  // d = "YYYY-MM-DD"
   const [y, m, dd] = d.split("-");
   return `${y.slice(2)}${m}${dd}`;
 }
-// Rentalcars y Kayak usan partes separadas.
+
 function ymdParts(d: string) {
   const [y, m, dd] = d.split("-");
-  return { y, m, d: dd };
+  return { y, m, d: String(Number(dd)), mm: String(Number(m)) };
 }
 
-function buildSkyscannerUrl(opts: { from: string; to: string; originIATA?: string; destIATA?: string; destCity: string; pax: number; }): string {
-  const adults = Math.max(1, opts.pax || 1);
+const CITY_IATA: Record<string, string> = {
+  madrid: "MAD",
+  barcelona: "BCN",
+  paris: "PAR",
+  london: "LON",
+  londres: "LON",
+  rome: "ROM",
+  roma: "ROM",
+  milan: "MIL",
+  milano: "MIL",
+  lisbon: "LIS",
+  lisboa: "LIS",
+  amsterdam: "AMS",
+  berlin: "BER",
+  miami: "MIA",
+  "new york": "NYC",
+  "nueva york": "NYC",
+  bogota: "BOG",
+  bogotá: "BOG",
+  medellin: "MDE",
+  medellín: "MDE",
+  cali: "CLO",
+  cartagena: "CTG",
+  panama: "PTY",
+  panamá: "PTY",
+  cancun: "CUN",
+  cancún: "CUN",
+  mexico: "MEX",
+  "ciudad de mexico": "MEX",
+  "ciudad de méxico": "MEX",
+  buenosaires: "BUE",
+  "buenos aires": "BUE",
+  lima: "LIM",
+  santiago: "SCL",
+  quito: "UIO",
+};
+
+function normalizeCityKey(value?: string): string {
+  return (value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function cleanIata(value?: string, cityFallback?: string): string | undefined {
+  const raw = (value || "").trim().toUpperCase();
+  if (/^[A-Z]{3}$/.test(raw)) return raw;
+  const key = normalizeCityKey(cityFallback || value);
+  return CITY_IATA[key] || CITY_IATA[key.replace(/\s+/g, "")];
+}
+
+function slug(value: string): string {
+  return normalizeCityKey(value)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function buildSkyscannerUrl(opts: { from: string; to: string; originCity?: string; originIATA?: string; destIATA?: string; destCity: string; pax: number; }): string {
+  const adults = Math.max(1, Number(opts.pax) || 1);
   const out = toYYMMDD(opts.from);
   const ret = toYYMMDD(opts.to);
-  if (opts.originIATA && opts.destIATA) {
-    return `https://www.skyscanner.net/transport/flights/${opts.originIATA.toLowerCase()}/${opts.destIATA.toLowerCase()}/${out}/${ret}/?adults=${adults}`;
+  const origin = cleanIata(opts.originIATA, opts.originCity);
+  const dest = cleanIata(opts.destIATA, opts.destCity);
+  const common = `adults=${adults}&adultsv2=${adults}&cabinclass=economy&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false&ref=home#/`;
+
+  if (origin && dest) {
+    return `https://www.skyscanner.net/transport/flights/${origin.toLowerCase()}/${dest.toLowerCase()}/${out}/${ret}/?${common}`;
   }
-  // Sin IATA → buscador general por ciudad destino
-  return `https://www.skyscanner.net/transport/flights-to/${encodeURIComponent(opts.destCity.toLowerCase().replace(/\s+/g, "-"))}/?adults=${adults}&iym=${out.slice(0,4)}&oym=${ret.slice(0,4)}`;
+
+  if (dest) {
+    const destSlug = slug(opts.destCity) || dest.toLowerCase();
+    const monthView = `oym=${out.slice(0, 4)}&iym=${ret.slice(0, 4)}&selectedoday=${opts.from.slice(8, 10)}&selectediday=${opts.to.slice(8, 10)}&rtn=1&${common}`;
+    return `https://www.skyscanner.net/transport/flights-to/${dest.toLowerCase()}/?${monthView}`;
+  }
+
+  const q = `${opts.originCity ? `${opts.originCity} to ` : ""}${opts.destCity} ${opts.from} ${opts.to} ${adults} adults`;
+  return `https://www.skyscanner.net/?search=${encodeURIComponent(q)}`;
 }
 
 function buildGoogleFlightsUrl(opts: { from: string; to: string; originCity?: string; destCity: string; pax: number; }): string {
-  const q = `Flights to ${opts.destCity}${opts.originCity ? ` from ${opts.originCity}` : ""} on ${opts.from} through ${opts.to} for ${Math.max(1, opts.pax || 1)} adults`;
+  const q = `Flights to ${opts.destCity}${opts.originCity ? ` from ${opts.originCity}` : ""} ${opts.from} ${opts.to} ${Math.max(1, Number(opts.pax) || 1)} adults`;
   return `https://www.google.com/travel/flights?q=${encodeURIComponent(q)}`;
 }
 
-function buildRentalcarsUrl(opts: { city: string; from: string; to: string }): string {
+function buildRentalcarsUrl(opts: { city: string; country?: string; from: string; to: string }): string {
   const a = ymdParts(opts.from);
   const b = ymdParts(opts.to);
+  const locationName = [opts.city, opts.country].filter(Boolean).join(", ");
   const params = new URLSearchParams({
-    location: opts.city,
-    driverage: "30",
-    puDay: a.d, puMonth: a.m, puYear: a.y, puHour: "10", puMinute: "00",
-    doDay: b.d, doMonth: b.m, doYear: b.y, doHour: "10", doMinute: "00",
+    locationName,
+    dropLocationName: locationName,
+    puDay: a.d,
+    puMonth: a.mm,
+    puYear: a.y,
+    puHour: "10",
+    puMinute: "0",
+    doDay: b.d,
+    doMonth: b.mm,
+    doYear: b.y,
+    doHour: "10",
+    doMinute: "0",
+    driversAge: "30",
+    ftsType: "C",
+    dropFtsType: "C",
   });
-  return `https://www.rentalcars.com/en/search/?${params.toString()}`;
+  return `https://www.rentalcars.com/search-results?${params.toString()}`;
 }
 
 function buildKayakCarsUrl(opts: { city: string; from: string; to: string }): string {
-  const city = encodeURIComponent(opts.city.toLowerCase().replace(/\s+/g, "-"));
-  return `https://www.kayak.com/cars/${city}/${opts.from}/${opts.to}`;
+  return `https://www.kayak.com/cars/${encodeURIComponent(slug(opts.city))}/${opts.from}/${opts.to}`;
+}
+
+function buildViatorSearchUrl(opts: { city: string; from: string; to: string; pax: number; query?: string }): string {
+  const params = new URLSearchParams({
+    text: [opts.query, opts.city].filter(Boolean).join(" "),
+    startDate: opts.from,
+    endDate: opts.to,
+    adult: String(Math.max(1, Number(opts.pax) || 1)),
+    adults: String(Math.max(1, Number(opts.pax) || 1)),
+  });
+  return `https://www.viator.com/searchResults/all?${params.toString()}`;
+}
+
+function buildGetYourGuideSearchUrl(opts: { city: string; from: string; to: string; pax: number; query?: string }): string {
+  const params = new URLSearchParams({
+    q: [opts.query, opts.city].filter(Boolean).join(" "),
+    date_from: opts.from,
+    date_to: opts.to,
+    participants: String(Math.max(1, Number(opts.pax) || 1)),
+  });
+  return `https://www.getyourguide.com/s/?${params.toString()}`;
+}
+
+function withTripParams(url: string | undefined, opts: { city: string; from: string; to: string; pax: number; query?: string; provider: "viator" | "gyg" }): string {
+  const fallback = opts.provider === "viator" ? buildViatorSearchUrl(opts) : buildGetYourGuideSearchUrl(opts);
+  if (!url) return fallback;
+  try {
+    const parsed = new URL(url);
+    if (opts.provider === "viator" && parsed.hostname.includes("viator.")) {
+      parsed.searchParams.set("startDate", opts.from);
+      parsed.searchParams.set("endDate", opts.to);
+      parsed.searchParams.set("adult", String(Math.max(1, Number(opts.pax) || 1)));
+      parsed.searchParams.set("adults", String(Math.max(1, Number(opts.pax) || 1)));
+      if (!parsed.searchParams.get("text") && opts.query) parsed.searchParams.set("text", [opts.query, opts.city].join(" "));
+      return parsed.toString();
+    }
+    if (opts.provider === "gyg" && parsed.hostname.includes("getyourguide.")) {
+      parsed.searchParams.set("date_from", opts.from);
+      parsed.searchParams.set("date_to", opts.to);
+      parsed.searchParams.set("participants", String(Math.max(1, Number(opts.pax) || 1)));
+      if (!parsed.searchParams.get("q") && opts.query) parsed.searchParams.set("q", [opts.query, opts.city].join(" "));
+      return parsed.toString();
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 /* --------------------------------- component --------------------------------- */
@@ -117,10 +244,16 @@ export default function TravelExtrasTabs(props: Props) {
 
   // Deep-links calculados a partir de props del viaje (siempre vigentes).
   const trip = {
-    skyscanner:   buildSkyscannerUrl({ from: props.from, to: props.to, originIATA: props.originIATA, destIATA: props.destIATA, destCity: props.city, pax: props.pax ?? 1 }),
+    skyscanner:   buildSkyscannerUrl({ from: props.from, to: props.to, originCity: props.originCity, originIATA: props.originIATA, destIATA: props.destIATA, destCity: props.city, pax: props.pax ?? 1 }),
     googleFlights:buildGoogleFlightsUrl({ from: props.from, to: props.to, originCity: props.originCity, destCity: props.city, pax: props.pax ?? 1 }),
-    rentalcars:   buildRentalcarsUrl({ city: props.city, from: props.from, to: props.to }),
+    rentalcars:   buildRentalcarsUrl({ city: props.city, country: props.country, from: props.from, to: props.to }),
     kayakCars:    buildKayakCarsUrl({ city: props.city, from: props.from, to: props.to }),
+    viator:       buildViatorSearchUrl({ city: props.city, from: props.from, to: props.to, pax: props.pax ?? 1 }),
+    getYourGuide: buildGetYourGuideSearchUrl({ city: props.city, from: props.from, to: props.to, pax: props.pax ?? 1 }),
+    city: props.city,
+    from: props.from,
+    to: props.to,
+    pax: props.pax ?? 1,
   };
 
   return (
@@ -152,7 +285,7 @@ export default function TravelExtrasTabs(props: Props) {
             {tab === "flights"   && <FlightsList   items={data.flights}   trip={trip} />}
             {tab === "cars"      && <CarsList      items={data.cars}      trip={trip} />}
             {tab === "transport" && <TransportList items={data.transport} />}
-            {tab === "tours"     && <ToursList     items={data.tours} />}
+            {tab === "tours"     && <ToursList     items={data.tours}     trip={trip} />}
             <p className="mt-4 text-xs text-gray-400">
               Fuentes: {Object.entries(data.meta.sources).map(([k,v]) => `${k}:${v}`).join(" · ")}
             </p>
@@ -183,6 +316,12 @@ type TripLinks = {
   googleFlights: string;
   rentalcars: string;
   kayakCars: string;
+  viator: string;
+  getYourGuide: string;
+  city: string;
+  from: string;
+  to: string;
+  pax: number;
 };
 
 // Validamos las URLs que vienen del backend: si están vacías o son la home
@@ -192,7 +331,15 @@ function isUsefulUrl(u: string | undefined, host: string): boolean {
   try {
     const url = new URL(u);
     if (!url.hostname.includes(host)) return false;
-    // Si no tiene path significativo ni params, lo consideramos roto (home)
+    if (url.hostname.includes("skyscanner") && url.pathname.includes("/transport/flights/")) {
+      const parts = url.pathname.split("/").filter(Boolean);
+      const origin = parts[2] || "";
+      const dest = parts[3] || "";
+      return /^[a-z]{3}$/i.test(origin) && /^[a-z]{3}$/i.test(dest);
+    }
+    if (url.hostname.includes("rentalcars")) {
+      return url.pathname.includes("search-results") && url.searchParams.has("locationName") && url.searchParams.has("puDay") && url.searchParams.has("doDay");
+    }
     return url.pathname.length > 2 || url.searchParams.toString().length > 0;
   } catch { return false; }
 }
@@ -302,24 +449,43 @@ function TransportList({ items }: { items: any[] }) {
   );
 }
 
-function ToursList({ items }: { items: any[] }) {
-  if (!items.length) return <Empty />;
-  return (
-    <div className="grid gap-3 md:grid-cols-2">
-      {items.map((t, i) => (
-        <Card key={i}>
-          <div className="flex items-center justify-between">
-            <div className="font-semibold">{t.title}</div>
-            <Price p={t.price} />
-          </div>
-          <div className="mt-1 text-xs text-gray-500">{t.category} · {t.durationHrs}h {t.bestTimeOfDay ? `· ${t.bestTimeOfDay}` : ""}</div>
-          {t.whyIconic && <div className="mt-2 text-sm text-gray-700">{t.whyIconic}</div>}
+function ToursList({ items, trip }: { items: any[]; trip: TripLinks }) {
+  if (!items.length) {
+    return (
+      <div className="grid gap-3 md:grid-cols-2">
+        <Card>
+          <div className="font-semibold">Buscar tours con tus fechas</div>
+          <div className="mt-1 text-sm text-gray-600">Viator y GetYourGuide pre-rellenados con destino, fechas y viajeros.</div>
           <div className="mt-3 flex gap-2">
-            <a className="rounded-lg bg-black px-3 py-1.5 text-xs text-white" href={t.bookUrl} target="_blank" rel="noreferrer">GetYourGuide</a>
-            <a className="rounded-lg border px-3 py-1.5 text-xs" href={t.bookUrlAlt} target="_blank" rel="noreferrer">Viator</a>
+            <a className="rounded-lg bg-black px-3 py-1.5 text-xs text-white" href={trip.getYourGuide} target="_blank" rel="noreferrer">GetYourGuide ↗</a>
+            <a className="rounded-lg border px-3 py-1.5 text-xs" href={trip.viator} target="_blank" rel="noreferrer">Viator ↗</a>
           </div>
         </Card>
-      ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      {items.map((t, i) => {
+        const query = t.title || t.category || "tours";
+        const gygUrl = withTripParams(t.bookUrl, { city: trip.city, from: trip.from, to: trip.to, pax: trip.pax, query, provider: "gyg" });
+        const viatorUrl = withTripParams(t.bookUrlAlt, { city: trip.city, from: trip.from, to: trip.to, pax: trip.pax, query, provider: "viator" });
+        return (
+          <Card key={i}>
+            <div className="flex items-center justify-between">
+              <div className="font-semibold">{t.title}</div>
+              <Price p={t.price} />
+            </div>
+            <div className="mt-1 text-xs text-gray-500">{t.category} · {t.durationHrs}h {t.bestTimeOfDay ? `· ${t.bestTimeOfDay}` : ""}</div>
+            {t.whyIconic && <div className="mt-2 text-sm text-gray-700">{t.whyIconic}</div>}
+            <div className="mt-3 flex gap-2">
+              <a className="rounded-lg bg-black px-3 py-1.5 text-xs text-white" href={gygUrl} target="_blank" rel="noreferrer">GetYourGuide</a>
+              <a className="rounded-lg border px-3 py-1.5 text-xs" href={viatorUrl} target="_blank" rel="noreferrer">Viator</a>
+            </div>
+          </Card>
+        );
+      })}
     </div>
   );
 }
