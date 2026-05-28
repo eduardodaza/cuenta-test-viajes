@@ -22,6 +22,10 @@ export function buildItineraryPrompt(form: TripFormData): string {
     weekday: "long", day: "numeric", month: "long",
   });
 
+  // Cantidad dinámica: ~3 por día (desayuno/almuerzo/cena) con mínimo 9 y máximo 18
+  const minResto = Math.max(9, days * 3);
+  const maxResto = Math.min(18, days * 3 + 3);
+
   return `You are a SENIOR LOCAL TRAVEL EXPERT for ${form.city}, ${form.country}, with deep knowledge of traditional culture, popular festivals, iconic nightlife, top-rated venues from TripAdvisor / Google Maps / Yelp, and what locals actually recommend. Generate a realistic, INSIDER-LEVEL itinerary in ${lang}.
 
 TRIP:
@@ -44,10 +48,20 @@ RULE 1 — REAL OPENING HOURS:
 - Shopping: 10:00–20:00.
 - Long tours: start 08:00–10:00 or 14:00–15:00, never after 16:00.
 
-RULE 2 — RESTAURANTS MUST BE REAL AND IN ${form.city}:
-- Use only restaurants that genuinely exist in ${form.city}, ${form.country}.
+RULE 2 — RESTAURANTS MUST BE REAL, ABUNDANT AND ALIGNED TO THE DAILY ROUTE:
+- Use ONLY restaurants that genuinely exist in ${form.city}, ${form.country}.
+- Provide BETWEEN ${minResto} AND ${maxResto} restaurants total (NEVER fewer than ${minResto}).
+- Distribute them so that for EACH day of the trip there are AT LEAST 3 options near the
+  zones/attractions of that day: one breakfast/café, one lunch close to the midday
+  attraction, one dinner in a nightlife/dining neighborhood.
+- Cover ALL price tiers: at least 3 "$" (casual / street food / market), at least 3 "$$"
+  (mid-range local favorite), at least 2 "$$$" (premium / signature), and 1 "$$$$" only if
+  the city has world-class fine dining.
+- Mix cuisines: traditional local, contemporary, international, vegetarian/vegan option.
 - Prioritize places with strong reputation on TripAdvisor / Google Maps / Yelp.
-- Never invent names. If unsure, describe generically by neighborhood.
+- Never invent names. If unsure of a name, omit it (do NOT fabricate).
+- For EACH restaurant include the field "dayHint" with the day number it best fits
+  (1..${days}) and "mealHint" = "breakfast" | "lunch" | "dinner" | "snack".
 
 RULE 3 — EVENTS, FESTIVALS AND TRADITIONS (CRITICAL — THIS IS THE APP'S VALUE):
 You MUST populate "events" with the BEST of what is happening in ${form.city} between ${startMonth} ${startDay} and ${endDay}. Include:
@@ -114,7 +128,9 @@ Respond ONLY with valid JSON (no markdown, no backticks):
       "specialty": "signature dish",
       "zone": "neighborhood in ${form.city}",
       "source": "TripAdvisor / Google Maps / Yelp",
-      "address": "real street address in ${form.city} if known"
+      "address": "real street address in ${form.city} if known",
+      "dayHint": 1,
+      "mealHint": "lunch"
     }
   ],
   "events": [
@@ -133,5 +149,5 @@ Respond ONLY with valid JSON (no markdown, no backticks):
   ]
 }
 
-Include 6-8 items per day. Populate "events" with AT LEAST 4 entries combining traditional festivals (if any in window) and iconic recurring shows/nightlife. Every time must respect the opening hours above.`;
+Include 6-8 items per day. Populate "restaurants" with ${minResto}-${maxResto} entries distributed across all days (use "dayHint"). Populate "events" with AT LEAST 4 entries combining traditional festivals (if any in window) and iconic recurring shows/nightlife. Every time must respect the opening hours above.`;
 }
