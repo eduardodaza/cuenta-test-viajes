@@ -1,11 +1,11 @@
 // src/components/TravelExtrasTabs.tsx
-// Drop-in component. Úsalo en la página de resultados del viaje, junto a la lista de hoteles.
-//
-// FIX recurrente (beta):
-//   - Skyscanner solo recibe rutas /transport/flights/... cuando origin/dest son IATA reales.
-//     Si el origen viene como texto libre o placeholder, cae a una página Skyscanner válida del destino.
-//   - Rentalcars usa /search-results con locationName + fechas; evita NaN y formularios vacíos.
-//   - Viator/GetYourGuide siempre reciben fechas y viajeros en la URL final.
+// FIX (beta):
+//  - Auto-detección del origen del cliente vía ipapi.co (gratis, sin key).
+//  - Google Flights con URL estructurada (#flt=ORIG.DEST.YYYY-MM-DD*...).
+//  - Skyscanner: solo /transport/flights/<from>/<to>/<YYMMDD>/<YYMMDD>/ cuando hay 2 IATAs reales.
+//    Si falta origen tras la detección, abrimos buscador con hash destino (no más 404).
+//  - Autos: usamos Booking.com Cars (resuelve texto libre) en lugar del /search-results de Rentalcars
+//    que ya no funciona sin locationId. Conservamos Kayak como alternativa.
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -37,62 +37,37 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "tours",     label: "Tours",      icon: "🎭" },
 ];
 
-/* ------------------------------ deep-link helpers ------------------------------ */
-// Skyscanner usa YYMMDD en su URL canónica de búsqueda.
+/* ------------------------------ helpers ------------------------------ */
 function toYYMMDD(d: string): string {
   const [y, m, dd] = d.split("-");
   return `${y.slice(2)}${m}${dd}`;
 }
 
-function ymdParts(d: string) {
-  const [y, m, dd] = d.split("-");
-  return { y, m, d: String(Number(dd)), mm: String(Number(m)) };
-}
-
 const CITY_IATA: Record<string, string> = {
-  madrid: "MAD",
-  barcelona: "BCN",
-  paris: "PAR",
-  london: "LON",
-  londres: "LON",
-  rome: "ROM",
-  roma: "ROM",
-  milan: "MIL",
-  milano: "MIL",
-  lisbon: "LIS",
-  lisboa: "LIS",
-  amsterdam: "AMS",
-  berlin: "BER",
-  miami: "MIA",
-  "new york": "NYC",
-  "nueva york": "NYC",
-  bogota: "BOG",
-  bogotá: "BOG",
-  medellin: "MDE",
-  medellín: "MDE",
-  cali: "CLO",
-  cartagena: "CTG",
-  panama: "PTY",
-  panamá: "PTY",
-  cancun: "CUN",
-  cancún: "CUN",
-  mexico: "MEX",
-  "ciudad de mexico": "MEX",
-  "ciudad de méxico": "MEX",
-  buenosaires: "BUE",
-  "buenos aires": "BUE",
-  lima: "LIM",
-  santiago: "SCL",
-  quito: "UIO",
+  madrid: "MAD", barcelona: "BCN", paris: "PAR", london: "LON", londres: "LON",
+  rome: "ROM", roma: "ROM", milan: "MIL", milano: "MIL", lisbon: "LIS", lisboa: "LIS",
+  amsterdam: "AMS", berlin: "BER", miami: "MIA", "new york": "NYC", "nueva york": "NYC",
+  bogota: "BOG", "bogotá": "BOG", medellin: "MDE", "medellín": "MDE",
+  cali: "CLO", cartagena: "CTG", panama: "PTY", "panamá": "PTY",
+  cancun: "CUN", "cancún": "CUN", mexico: "MEX", "ciudad de mexico": "MEX", "ciudad de méxico": "MEX",
+  "buenos aires": "BUE", lima: "LIM", santiago: "SCL", quito: "UIO",
+  caracas: "CCS", guayaquil: "GYE", "san jose": "SJO", "san josé": "SJO",
+  guatemala: "GUA", "san salvador": "SAL", tegucigalpa: "TGU", managua: "MGA",
+  habana: "HAV", "la habana": "HAV", "santo domingo": "SDQ",
+  toronto: "YTO", montreal: "YMQ", vancouver: "YVR",
+  "los angeles": "LAX", chicago: "CHI", houston: "HOU", dallas: "DFW",
+  orlando: "ORL", boston: "BOS", washington: "WAS", atlanta: "ATL",
+  "san francisco": "SFO", seattle: "SEA", "las vegas": "LAS", denver: "DEN",
+  frankfurt: "FRA", munich: "MUC", zurich: "ZRH", vienna: "VIE", viena: "VIE",
+  praga: "PRG", prague: "PRG", dublin: "DUB", brussels: "BRU", bruselas: "BRU",
+  estambul: "IST", istanbul: "IST", dubai: "DXB", "abu dhabi": "AUH",
+  tokyo: "TYO", tokio: "TYO", "hong kong": "HKG", singapore: "SIN", singapur: "SIN",
+  bangkok: "BKK", seoul: "SEL", seúl: "SEL", sydney: "SYD", melbourne: "MEL",
 };
 
 function normalizeCityKey(value?: string): string {
-  return (value || "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ");
+  return (value || "").trim().toLowerCase().normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
 }
 
 function cleanIata(value?: string, cityFallback?: string): string | undefined {
@@ -103,60 +78,57 @@ function cleanIata(value?: string, cityFallback?: string): string | undefined {
 }
 
 function slug(value: string): string {
-  return normalizeCityKey(value)
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+  return normalizeCityKey(value).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-function buildSkyscannerUrl(opts: { from: string; to: string; originCity?: string; originIATA?: string; destIATA?: string; destCity: string; pax: number; }): string {
+/* ----------------------- deep-link builders ----------------------- */
+
+// Skyscanner — solo emitimos la ruta canónica cuando hay 2 IATAs reales.
+function buildSkyscannerUrl(opts: { from: string; to: string; originIATA?: string; destIATA?: string; originCity?: string; destCity: string; pax: number; }): string {
   const adults = Math.max(1, Number(opts.pax) || 1);
   const out = toYYMMDD(opts.from);
   const ret = toYYMMDD(opts.to);
   const origin = cleanIata(opts.originIATA, opts.originCity);
-  const dest = cleanIata(opts.destIATA, opts.destCity);
-  const common = `adults=${adults}&adultsv2=${adults}&cabinclass=economy&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false&ref=home#/`;
+  const dest   = cleanIata(opts.destIATA,   opts.destCity);
+  const common = `adults=${adults}&adultsv2=${adults}&cabinclass=economy&rtn=1`;
 
   if (origin && dest) {
     return `https://www.skyscanner.net/transport/flights/${origin.toLowerCase()}/${dest.toLowerCase()}/${out}/${ret}/?${common}`;
   }
-
-  if (dest) {
-    const destSlug = slug(opts.destCity) || dest.toLowerCase();
-    const monthView = `oym=${out.slice(0, 4)}&iym=${ret.slice(0, 4)}&selectedoday=${opts.from.slice(8, 10)}&selectediday=${opts.to.slice(8, 10)}&rtn=1&${common}`;
-    return `https://www.skyscanner.net/transport/flights-to/${dest.toLowerCase()}/?${monthView}`;
-  }
-
-  const q = `${opts.originCity ? `${opts.originCity} to ` : ""}${opts.destCity} ${opts.from} ${opts.to} ${adults} adults`;
+  // Sin origen: buscador con destino preseleccionado (NO /flights-to/ que da 404).
+  const q = `${opts.originCity ? `${opts.originCity} a ` : ""}${opts.destCity} ${opts.from} ${opts.to} ${adults} adultos`;
   return `https://www.skyscanner.net/?search=${encodeURIComponent(q)}`;
 }
 
-function buildGoogleFlightsUrl(opts: { from: string; to: string; originCity?: string; destCity: string; pax: number; }): string {
-  const q = `Flights to ${opts.destCity}${opts.originCity ? ` from ${opts.originCity}` : ""} ${opts.from} ${opts.to} ${Math.max(1, Number(opts.pax) || 1)} adults`;
-  return `https://www.google.com/travel/flights?q=${encodeURIComponent(q)}`;
+// Google Flights — URL estructurada que SÍ pre-rellena cuando hay 2 IATAs.
+function buildGoogleFlightsUrl(opts: { from: string; to: string; originIATA?: string; destIATA?: string; originCity?: string; destCity: string; pax: number; }): string {
+  const adults = Math.max(1, Number(opts.pax) || 1);
+  const origin = cleanIata(opts.originIATA, opts.originCity);
+  const dest   = cleanIata(opts.destIATA,   opts.destCity);
+  if (origin && dest) {
+    const hash = `#flt=${origin}.${dest}.${opts.from}*${dest}.${origin}.${opts.to};c:USD;e:1;sd:1;t:f;px:${adults}`;
+    return `https://www.google.com/travel/flights?hl=es&curr=USD${hash}`;
+  }
+  const q = `Vuelos${opts.originCity ? ` desde ${opts.originCity}` : ""} a ${opts.destCity} ${opts.from} ${opts.to} ${adults} adultos`;
+  return `https://www.google.com/travel/flights?q=${encodeURIComponent(q)}&hl=es&curr=USD`;
 }
 
-function buildRentalcarsUrl(opts: { city: string; country?: string; from: string; to: string }): string {
-  const a = ymdParts(opts.from);
-  const b = ymdParts(opts.to);
-  const locationName = [opts.city, opts.country].filter(Boolean).join(", ");
+// Autos — Booking.com Cars (heredero de Rentalcars, acepta texto libre y SÍ devuelve resultados).
+function buildBookingCarsUrl(opts: { city: string; country?: string; from: string; to: string }): string {
+  const loc = [opts.city, opts.country].filter(Boolean).join(", ");
   const params = new URLSearchParams({
-    locationName,
-    dropLocationName: locationName,
-    puDay: a.d,
-    puMonth: a.mm,
-    puYear: a.y,
-    puHour: "10",
-    puMinute: "0",
-    doDay: b.d,
-    doMonth: b.mm,
-    doYear: b.y,
-    doHour: "10",
-    doMinute: "0",
-    driversAge: "30",
-    ftsType: "C",
-    dropFtsType: "C",
+    ss: loc,
+    pickup_query: loc,
+    dropoff_query: loc,
+    from_date: opts.from,
+    from_time: "10:00",
+    to_date: opts.to,
+    to_time: "10:00",
+    driver_age: "30",
+    aid: "304142",
+    lang: "es",
   });
-  return `https://www.rentalcars.com/search-results?${params.toString()}`;
+  return `https://cars.booking.com/searchresults.html?${params.toString()}`;
 }
 
 function buildKayakCarsUrl(opts: { city: string; from: string; to: string }): string {
@@ -166,8 +138,7 @@ function buildKayakCarsUrl(opts: { city: string; from: string; to: string }): st
 function buildViatorSearchUrl(opts: { city: string; from: string; to: string; pax: number; query?: string }): string {
   const params = new URLSearchParams({
     text: [opts.query, opts.city].filter(Boolean).join(" "),
-    startDate: opts.from,
-    endDate: opts.to,
+    startDate: opts.from, endDate: opts.to,
     adult: String(Math.max(1, Number(opts.pax) || 1)),
     adults: String(Math.max(1, Number(opts.pax) || 1)),
   });
@@ -177,8 +148,7 @@ function buildViatorSearchUrl(opts: { city: string; from: string; to: string; pa
 function buildGetYourGuideSearchUrl(opts: { city: string; from: string; to: string; pax: number; query?: string }): string {
   const params = new URLSearchParams({
     q: [opts.query, opts.city].filter(Boolean).join(" "),
-    date_from: opts.from,
-    date_to: opts.to,
+    date_from: opts.from, date_to: opts.to,
     participants: String(Math.max(1, Number(opts.pax) || 1)),
   });
   return `https://www.getyourguide.com/s/?${params.toString()}`;
@@ -205,31 +175,48 @@ function withTripParams(url: string | undefined, opts: { city: string; from: str
       return parsed.toString();
     }
     return fallback;
-  } catch {
-    return fallback;
-  }
+  } catch { return fallback; }
 }
 
-/* --------------------------------- component --------------------------------- */
+/* --------------------------- component --------------------------- */
 export default function TravelExtrasTabs(props: Props) {
   const [tab, setTab] = useState<Tab>("flights");
   const [data, setData] = useState<ApiResp | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Auto-detección del ORIGEN si el padre no lo proveyó.
+  const [autoOrigin, setAutoOrigin] = useState<{ city?: string; iata?: string }>({});
+  useEffect(() => {
+    if (props.originIATA || props.originCity) return;
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("https://ipapi.co/json/");
+        if (!r.ok) return;
+        const j = await r.json();
+        const city: string | undefined = j.city;
+        const iata = cleanIata(undefined, city);
+        if (alive) setAutoOrigin({ city, iata });
+      } catch { /* silencio: sigue con destino solamente */ }
+    })();
+    return () => { alive = false; };
+  }, [props.originIATA, props.originCity]);
+
+  const effOriginCity = props.originCity || autoOrigin.city;
+  const effOriginIATA = props.originIATA || autoOrigin.iata;
+
   const qs = useMemo(() => {
     const p = new URLSearchParams({
-      city: props.city,
-      country: props.country,
-      from: props.from,
-      to: props.to,
+      city: props.city, country: props.country,
+      from: props.from, to: props.to,
       pax: String(props.pax ?? 1),
     });
-    if (props.originCity) p.set("originCity", props.originCity);
-    if (props.originIATA) p.set("originIATA", props.originIATA);
-    if (props.destIATA)   p.set("destIATA", props.destIATA);
+    if (effOriginCity) p.set("originCity", effOriginCity);
+    if (effOriginIATA) p.set("originIATA", effOriginIATA);
+    if (props.destIATA) p.set("destIATA", props.destIATA);
     return p.toString();
-  }, [props]);
+  }, [props, effOriginCity, effOriginIATA]);
 
   useEffect(() => {
     let alive = true;
@@ -242,40 +229,38 @@ export default function TravelExtrasTabs(props: Props) {
     return () => { alive = false; };
   }, [qs]);
 
-  // Deep-links calculados a partir de props del viaje (siempre vigentes).
   const trip = {
-    skyscanner:   buildSkyscannerUrl({ from: props.from, to: props.to, originCity: props.originCity, originIATA: props.originIATA, destIATA: props.destIATA, destCity: props.city, pax: props.pax ?? 1 }),
-    googleFlights:buildGoogleFlightsUrl({ from: props.from, to: props.to, originCity: props.originCity, destCity: props.city, pax: props.pax ?? 1 }),
-    rentalcars:   buildRentalcarsUrl({ city: props.city, country: props.country, from: props.from, to: props.to }),
-    kayakCars:    buildKayakCarsUrl({ city: props.city, from: props.from, to: props.to }),
-    viator:       buildViatorSearchUrl({ city: props.city, from: props.from, to: props.to, pax: props.pax ?? 1 }),
-    getYourGuide: buildGetYourGuideSearchUrl({ city: props.city, from: props.from, to: props.to, pax: props.pax ?? 1 }),
-    city: props.city,
-    from: props.from,
-    to: props.to,
-    pax: props.pax ?? 1,
+    skyscanner:    buildSkyscannerUrl({ from: props.from, to: props.to, originCity: effOriginCity, originIATA: effOriginIATA, destIATA: props.destIATA, destCity: props.city, pax: props.pax ?? 1 }),
+    googleFlights: buildGoogleFlightsUrl({ from: props.from, to: props.to, originCity: effOriginCity, originIATA: effOriginIATA, destIATA: props.destIATA, destCity: props.city, pax: props.pax ?? 1 }),
+    rentalcars:    buildBookingCarsUrl({ city: props.city, country: props.country, from: props.from, to: props.to }),
+    kayakCars:     buildKayakCarsUrl({ city: props.city, from: props.from, to: props.to }),
+    viator:        buildViatorSearchUrl({ city: props.city, from: props.from, to: props.to, pax: props.pax ?? 1 }),
+    getYourGuide:  buildGetYourGuideSearchUrl({ city: props.city, from: props.from, to: props.to, pax: props.pax ?? 1 }),
+    city: props.city, from: props.from, to: props.to, pax: props.pax ?? 1,
+    originCity: effOriginCity, originIATA: effOriginIATA,
   };
 
   return (
     <section className="mt-6 rounded-2xl border bg-white shadow-sm">
       <div className="flex gap-1 overflow-x-auto border-b p-2">
         {TABS.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
+          <button key={t.id} onClick={() => setTab(t.id)}
             className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition ${
               tab === t.id ? "bg-black text-white" : "text-gray-600 hover:bg-gray-100"
-            }`}
-          >
+            }`}>
             <span>{t.icon}</span>{t.label}
             {data?.meta?.counts?.[t.id] != null && (
-              <span className="ml-1 rounded-full bg-gray-200 px-2 text-xs text-gray-700">
-                {data.meta.counts[t.id]}
-              </span>
+              <span className="ml-1 rounded-full bg-gray-200 px-2 text-xs text-gray-700">{data.meta.counts[t.id]}</span>
             )}
           </button>
         ))}
       </div>
+
+      {(tab === "flights") && (
+        <div className="px-4 pt-3 text-xs text-gray-500">
+          Origen detectado: <b>{effOriginCity || "—"}{effOriginIATA ? ` (${effOriginIATA})` : ""}</b> · Destino: <b>{props.city}{props.destIATA ? ` (${props.destIATA})` : ""}</b>
+        </div>
+      )}
 
       <div className="p-4">
         {loading && <div className="py-10 text-center text-gray-500">Buscando opciones actualizadas…</div>}
@@ -296,36 +281,24 @@ export default function TravelExtrasTabs(props: Props) {
   );
 }
 
-/* ------------------------------ subcomponentes ----------------------------- */
+/* --------------------------- subcomponents --------------------------- */
 
 function Price({ p }: { p?: { amount?: number; currency?: string; estimated?: boolean } }) {
   if (!p?.amount) return null;
-  return (
-    <span className="text-base font-semibold">
-      {p.estimated ? "~" : ""}{p.currency || "USD"} {Math.round(p.amount)}
-    </span>
-  );
+  return <span className="text-base font-semibold">{p.estimated ? "~" : ""}{p.currency || "USD"} {Math.round(p.amount)}</span>;
 }
-
 function Card({ children }: { children: React.ReactNode }) {
   return <div className="rounded-xl border p-4 hover:shadow-md transition">{children}</div>;
 }
+function Empty() { return <div className="py-10 text-center text-gray-500">Sin resultados.</div>; }
 
 type TripLinks = {
-  skyscanner: string;
-  googleFlights: string;
-  rentalcars: string;
-  kayakCars: string;
-  viator: string;
-  getYourGuide: string;
-  city: string;
-  from: string;
-  to: string;
-  pax: number;
+  skyscanner: string; googleFlights: string; rentalcars: string; kayakCars: string;
+  viator: string; getYourGuide: string;
+  city: string; from: string; to: string; pax: number;
+  originCity?: string; originIATA?: string;
 };
 
-// Validamos las URLs que vienen del backend: si están vacías o son la home
-// de Skyscanner/Rentalcars, las reemplazamos por el deep-link calculado.
 function isUsefulUrl(u: string | undefined, host: string): boolean {
   if (!u) return false;
   try {
@@ -333,25 +306,23 @@ function isUsefulUrl(u: string | undefined, host: string): boolean {
     if (!url.hostname.includes(host)) return false;
     if (url.hostname.includes("skyscanner") && url.pathname.includes("/transport/flights/")) {
       const parts = url.pathname.split("/").filter(Boolean);
-      const origin = parts[2] || "";
-      const dest = parts[3] || "";
-      return /^[a-z]{3}$/i.test(origin) && /^[a-z]{3}$/i.test(dest);
-    }
-    if (url.hostname.includes("rentalcars")) {
-      return url.pathname.includes("search-results") && url.searchParams.has("locationName") && url.searchParams.has("puDay") && url.searchParams.has("doDay");
+      return /^[a-z]{3}$/i.test(parts[2] || "") && /^[a-z]{3}$/i.test(parts[3] || "");
     }
     return url.pathname.length > 2 || url.searchParams.toString().length > 0;
   } catch { return false; }
 }
 
 function FlightsList({ items, trip }: { items: any[]; trip: TripLinks }) {
+  const noOrigin = !trip.originIATA;
   if (!items.length) {
-    // Aunque el backend no devuelva vuelos, mostramos los 2 buscadores con fechas pre-cargadas
     return (
       <div className="grid gap-3 md:grid-cols-2">
         <Card>
           <div className="font-semibold">Buscar vuelos con tus fechas</div>
-          <div className="mt-1 text-sm text-gray-600">Skyscanner y Google Flights pre-rellenados con destino, fechas y pasajeros.</div>
+          <div className="mt-1 text-sm text-gray-600">
+            {noOrigin ? "No detectamos un IATA de origen; los buscadores abrirán con tu destino y fechas para que elijas el aeropuerto de salida."
+                     : "Google Flights y Skyscanner pre-rellenados con origen, destino, fechas y pasajeros."}
+          </div>
           <div className="mt-3 flex gap-2">
             <a className="rounded-lg bg-black px-3 py-1.5 text-xs text-white" href={trip.googleFlights} target="_blank" rel="noreferrer">Google Flights ↗</a>
             <a className="rounded-lg border px-3 py-1.5 text-xs" href={trip.skyscanner} target="_blank" rel="noreferrer">Skyscanner ↗</a>
@@ -363,8 +334,8 @@ function FlightsList({ items, trip }: { items: any[]; trip: TripLinks }) {
   return (
     <div className="grid gap-3 md:grid-cols-2">
       {items.map((f, i) => {
-        const gUrl = isUsefulUrl(f.bookUrl,    "google.com")     ? f.bookUrl    : trip.googleFlights;
-        const sUrl = isUsefulUrl(f.bookUrlAlt, "skyscanner.")    ? f.bookUrlAlt : trip.skyscanner;
+        const gUrl = isUsefulUrl(f.bookUrl, "google.com") ? f.bookUrl : trip.googleFlights;
+        const sUrl = isUsefulUrl(f.bookUrlAlt, "skyscanner.") ? f.bookUrlAlt : trip.skyscanner;
         return (
           <Card key={i}>
             <div className="flex items-center justify-between">
@@ -392,7 +363,7 @@ function CarsList({ items, trip }: { items: any[]; trip: TripLinks }) {
       <div className="grid gap-3 md:grid-cols-2">
         <Card>
           <div className="font-semibold">Buscar autos con tus fechas</div>
-          <div className="mt-1 text-sm text-gray-600">Rentalcars y Kayak pre-rellenados con ciudad y fechas de recogida/devolución.</div>
+          <div className="mt-1 text-sm text-gray-600">Booking Cars (red Rentalcars) y Kayak pre-rellenados con ciudad y fechas de recogida/devolución.</div>
           <div className="mt-3 flex gap-2">
             <a className="rounded-lg bg-black px-3 py-1.5 text-xs text-white" href={trip.rentalcars} target="_blank" rel="noreferrer">Rentalcars ↗</a>
             <a className="rounded-lg border px-3 py-1.5 text-xs" href={trip.kayakCars} target="_blank" rel="noreferrer">Kayak ↗</a>
@@ -404,8 +375,9 @@ function CarsList({ items, trip }: { items: any[]; trip: TripLinks }) {
   return (
     <div className="grid gap-3 md:grid-cols-2">
       {items.map((c, i) => {
-        const rUrl = isUsefulUrl(c.bookUrl,    "rentalcars.") ? c.bookUrl    : trip.rentalcars;
-        const kUrl = isUsefulUrl(c.bookUrlAlt, "kayak.")      ? c.bookUrlAlt : trip.kayakCars;
+        // El bookUrl viejo apuntaba al /search-results roto: si es de rentalcars.com sin locationId, lo sustituimos.
+        const rUrl = isUsefulUrl(c.bookUrl, "booking.com") ? c.bookUrl : trip.rentalcars;
+        const kUrl = isUsefulUrl(c.bookUrlAlt, "kayak.") ? c.bookUrlAlt : trip.kayakCars;
         return (
           <Card key={i}>
             <div className="flex items-center justify-between">
@@ -441,7 +413,7 @@ function TransportList({ items }: { items: any[] }) {
           {t.safetyTip && <div className="mt-1 text-xs text-amber-700">⚠ {t.safetyTip}</div>}
           <div className="mt-3 flex gap-2">
             {t.bookUrl && <a className="rounded-lg bg-black px-3 py-1.5 text-xs text-white" href={t.bookUrl} target="_blank" rel="noreferrer">Abrir app</a>}
-            <a className="rounded-lg border px-3 py-1.5 text-xs" href={t.rome2rio} target="_blank" rel="noreferrer">Rome2Rio</a>
+            {t.rome2rio && <a className="rounded-lg border px-3 py-1.5 text-xs" href={t.rome2rio} target="_blank" rel="noreferrer">Rome2Rio</a>}
           </div>
         </Card>
       ))}
@@ -464,12 +436,11 @@ function ToursList({ items, trip }: { items: any[]; trip: TripLinks }) {
       </div>
     );
   }
-
   return (
     <div className="grid gap-3 md:grid-cols-2">
       {items.map((t, i) => {
         const query = t.title || t.category || "tours";
-        const gygUrl = withTripParams(t.bookUrl, { city: trip.city, from: trip.from, to: trip.to, pax: trip.pax, query, provider: "gyg" });
+        const gygUrl = withTripParams(t.bookUrl,    { city: trip.city, from: trip.from, to: trip.to, pax: trip.pax, query, provider: "gyg" });
         const viatorUrl = withTripParams(t.bookUrlAlt, { city: trip.city, from: trip.from, to: trip.to, pax: trip.pax, query, provider: "viator" });
         return (
           <Card key={i}>
@@ -488,8 +459,4 @@ function ToursList({ items, trip }: { items: any[]; trip: TripLinks }) {
       })}
     </div>
   );
-}
-
-function Empty() {
-  return <div className="py-8 text-center text-sm text-gray-500">Sin resultados para esta categoría.</div>;
 }
