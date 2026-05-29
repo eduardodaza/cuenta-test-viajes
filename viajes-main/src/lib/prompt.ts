@@ -22,11 +22,15 @@ export function buildItineraryPrompt(form: TripFormData): string {
     weekday: "long", day: "numeric", month: "long",
   });
 
-  // Cantidad dinámica: ~3 por día (desayuno/almuerzo/cena) con mínimo 9 y máximo 18
+  // Cantidad de restaurantes: ~3 por día con mínimo 9 y máximo 18
   const minResto = Math.max(9, days * 3);
   const maxResto = Math.min(18, days * 3 + 3);
 
-  return `You are a SENIOR LOCAL TRAVEL EXPERT for ${form.city}, ${form.country}, with deep knowledge of traditional culture, popular festivals, iconic nightlife, top-rated venues from TripAdvisor / Google Maps / Yelp, and what locals actually recommend. Generate a realistic, INSIDER-LEVEL itinerary in ${lang}.
+  // Actividades por día: aumentamos a 6–8 reales (no contamos transportes como item)
+  const minItems = 6;
+  const maxItems = 8;
+
+  return `You are a SENIOR LOCAL TRAVEL EXPERT for ${form.city}, ${form.country}, with deep knowledge of traditional culture, popular festivals, iconic nightlife, top-rated venues from TripAdvisor / Google Maps / Yelp / Lonely Planet / official tourism boards, and what locals actually recommend. Generate a realistic, INSIDER-LEVEL itinerary in ${lang}.
 
 TRIP:
 - Destination: ${form.city}, ${form.country}
@@ -65,27 +69,58 @@ RULE 2 — RESTAURANTS MUST BE REAL, ABUNDANT AND ALIGNED TO THE DAILY ROUTE:
 
 RULE 3 — EVENTS, FESTIVALS AND TRADITIONS (CRITICAL — THIS IS THE APP'S VALUE):
 You MUST populate "events" with the BEST of what is happening in ${form.city} between ${startMonth} ${startDay} and ${endDay}. Include:
-  a) RECURRING TRADITIONAL FESTIVALS that historically happen every year in this exact window
-     (examples of the kind of thing to include if relevant to the city/dates:
-      Feria de Cali = Dec 25–30 in Cali, Feria de las Flores = early August in Medellín,
-      Carnaval de Barranquilla = Feb/Mar, Carnaval de Negros y Blancos = Jan in Pasto,
-      Oktoberfest = late Sep in Munich, Fallas = March in Valencia, etc.).
-  b) ICONIC LOCAL SHOWS / NIGHTLIFE that run year-round and are CAN'T-MISS for any visitor
-     (e.g. for Cali: Delirio, El Mulato Cabaret, Tin Tin Deo, Zaperoco;
-      for Medellín: Comuna 13 graffiti tour, Guatapé day trip, Parque Lleras nightlife;
-      for Buenos Aires: a real tango show; for Tokyo: a sumo or robot show, etc.).
+  a) RECURRING TRADITIONAL FESTIVALS that historically happen every year in this exact window.
+  b) ICONIC LOCAL SHOWS / NIGHTLIFE that run year-round and are CAN'T-MISS for any visitor.
   c) Permanent attractions with scheduled performances (theaters, peñas, dance shows).
-
-NEVER leave "events" empty if the destination has known recurring traditions for ${startMonth}. Use your knowledge of the city. Each event must include realistic "when" (YYYY-MM-DD inside the trip window or "every Thursday/Friday/Saturday" for recurring shows), a venue, and a brief description of why it matters.
+NEVER leave "events" empty if the destination has known recurring traditions for ${startMonth}.
 
 RULE 4 — THE DAILY ITINERARY MUST INCLUDE LOCAL ICONS:
-At least one item per trip MUST be a celebrated local cultural experience (traditional show, signature nightlife, iconic neighborhood tour). For Cali this means including Delirio (Fridays) or a salsa show at El Mulato / Zaperoco / Tin Tin Deo. For Medellín, Comuna 13 graffiti tour + a Guatapé excursion. Apply the same logic to any destination.
+At least one item per trip MUST be a celebrated local cultural experience.
 
-RULE 5 — GEOGRAPHY:
-- All places located in ${form.city}, ${form.country}.
-- Walking/transport times realistic.
+RULE 5 — GEOGRAPHY, SECTORS AND NO REPETITION (CRITICAL — FIXES THE MAIN UX BUG):
+- All places located in ${form.city}, ${form.country}, with realistic walking/transport times.
+- THINK FIRST in terms of CITY SECTORS / NEIGHBORHOODS. Internally list the 6–10 most
+  important tourist sectors of ${form.city} (e.g. for Madrid: Centro/Sol-Gran Vía, Austrias,
+  Barrio de las Letras, Retiro-Prado, Salamanca, Chamberí, Malasaña-Conde Duque, Chueca,
+  Lavapiés-La Latina, Chamartín-Bernabéu; for Paris: Île de la Cité, Le Marais, Latin Quarter,
+  Saint-Germain, Champs-Élysées-Étoile, Montmartre, Opéra, Bastille, Trocadéro, Belleville).
+- ASSIGN A DIFFERENT PRIMARY SECTOR TO EACH DAY. NEVER repeat the same "zone" value as the
+  primary zone of two different days. If the trip is longer than the number of strong sectors,
+  use clearly different secondary sectors or a day-trip (e.g. Toledo/Segovia from Madrid,
+  Versailles from Paris) — but never duplicate.
+- Within a day, items SHOULD cluster in the day's primary sector and ONE adjacent sector to
+  minimize displacement. Do NOT pinball across the city.
+- HIERARCHY BY TOURIST IMPORTANCE (use Google Maps reviews + TripAdvisor "Things to do" +
+  official tourism board + Lonely Planet "Top experiences" as your mental ranking):
+    * Day 1: the SINGLE most iconic landmark of the city + its surrounding sector
+      (e.g. Madrid → Plaza Mayor + Palacio Real + Almudena + Mercado San Miguel).
+    * Day 2: the second-most iconic cluster (e.g. Madrid → Prado + Retiro + Barrio de las Letras).
+    * Day 3: third cluster (e.g. Reina Sofía + Lavapiés + La Latina tapas).
+    * Day 4+: progressively broader portfolio (Bernabéu/Salamanca shopping, Malasaña/Chueca
+      local life, day trips). Only include nightlife-only neighborhoods like Malasaña as a
+      PRIMARY zone if you still have unused top-tier sectors covered first.
+- For VERY SHORT trips (1–3 days) prioritize ONLY the most emblematic, must-see icons of
+  ${form.city}; do NOT dilute with secondary neighborhoods.
+- For LONGER trips (5+ days) expand the portfolio: include a day trip and at least one
+  off-the-beaten-path sector.
+
+RULE 6 — DAILY VOLUME AND REAL DISPLACEMENT/VISIT TIMES:
+- Each day MUST contain ${minItems}–${maxItems} REAL items (sights, food, events, night).
+  Transport hops do NOT count toward the minimum — add them as "transport" items between
+  real stops when displacement > 15 min.
+- Every item MUST include realistic "duration" (visit time at the place) AND, when moving
+  to the next item, "transport" (walking/metro/bus/taxi) + "transportTime" (e.g. "10 min").
+- Typical realistic visit times: major museum 2h–3h, palace/cathedral 1h–1h30, viewpoint
+  20–40 min, market 45 min–1h, walking tour of a neighborhood 1h30–2h, meal 1h–1h30.
+- Each day MUST cover morning + lunch + afternoon + evening/dinner (4 time blocks minimum).
 
 === END RULES ===
+
+BEFORE WRITING JSON, INTERNALLY (do NOT output) plan:
+  1) List the 6–10 top tourist sectors of ${form.city} ranked by global importance.
+  2) Assign each trip day to a DIFFERENT primary sector following the hierarchy in RULE 5.
+  3) For each day, list 6–8 real top-rated places inside that sector + 1 adjacent sector.
+  4) Verify NO two days share the same primary "zone" string.
 
 Respond ONLY with valid JSON (no markdown, no backticks):
 
@@ -101,7 +136,7 @@ Respond ONLY with valid JSON (no markdown, no backticks):
       "dayNum": 1,
       "theme": "day theme",
       "date": "${firstDayLabel}",
-      "zone": "main neighborhood visited",
+      "zone": "PRIMARY sector for this day — MUST be unique across all days",
       "items": [
         {
           "id": "d1i1",
@@ -149,5 +184,11 @@ Respond ONLY with valid JSON (no markdown, no backticks):
   ]
 }
 
-Include 6-8 items per day. Populate "restaurants" with ${minResto}-${maxResto} entries distributed across all days (use "dayHint"). Populate "events" with AT LEAST 4 entries combining traditional festivals (if any in window) and iconic recurring shows/nightlife. Every time must respect the opening hours above.`;
+HARD CONSTRAINTS — verify before responding:
+- Each day has ${minItems}–${maxItems} real items (excluding transport hops) covering morning, lunch, afternoon and evening.
+- The "zone" value of every day is DIFFERENT from every other day's "zone".
+- Days are ordered by tourist importance (most iconic sector first).
+- "restaurants" has ${minResto}–${maxResto} entries distributed via "dayHint" so every day gets ≥3.
+- "events" has ≥4 entries combining traditional festivals (if any in window) and iconic recurring shows.
+- Every time respects the opening hours in RULE 1.`;
 }
