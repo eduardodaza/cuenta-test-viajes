@@ -1,6 +1,6 @@
 // src/components/ItineraryView.tsx
 import React, { useState } from "react";
-import type { ItineraryData, ItineraryDay, UserEdits, Locale, TripFormData } from "@/lib/types";
+import type { ItineraryData, ItineraryDay, ItineraryItem, UserEdits, Locale, TripFormData } from "@/lib/types";
 import { t } from "@/lib/i18n";
 import TravelExtrasTabs from "@/components/TravelExtrasTabs";
 
@@ -25,9 +25,10 @@ export default function ItineraryView({ data, locale, onReset, form }: Props) {
   const [tab, setTab] = useState<"days" | "restaurants" | "events" | "hotels" | "extras" | "security">("days");
   const [openDays, setOpenDays] = useState<Set<number>>(new Set([0]));
   const [edits, setEdits] = useState<UserEdits>({});
-  const [editModal, setEditModal] = useState<{ id: string; name: string } | null>(null);
+  const [editModal, setEditModal] = useState<ItineraryItem | null>(null);
   const [editName, setEditName] = useState("");
   const [editNote, setEditNote] = useState("");
+  const [editAltIdx, setEditAltIdx] = useState<number>(-1);
 
   function toggleDay(i: number) {
     setOpenDays(prev => {
@@ -37,15 +38,24 @@ export default function ItineraryView({ data, locale, onReset, form }: Props) {
     });
   }
 
-  function openEdit(id: string, name: string) {
-    setEditModal({ id, name });
-    setEditName(edits[id]?.name ?? name);
-    setEditNote(edits[id]?.note ?? "");
+  function openEdit(item: ItineraryItem) {
+    setEditModal(item);
+    setEditName(edits[item.id]?.name ?? item.name);
+    setEditNote(edits[item.id]?.note ?? "");
+    setEditAltIdx(-1);
   }
 
   function saveEdit() {
     if (!editModal) return;
-    setEdits(prev => ({ ...prev, [editModal.id]: { name: editName, note: editNote } }));
+    const alt = editAltIdx >= 0 ? editModal.alternatives?.[editAltIdx] : undefined;
+    setEdits(prev => ({
+      ...prev,
+      [editModal.id]: {
+        name: alt ? alt.name : editName,
+        note: editNote,
+        replacement: alt,
+      },
+    }));
     setEditModal(null);
   }
 
@@ -240,17 +250,41 @@ export default function ItineraryView({ data, locale, onReset, form }: Props) {
       {/* Edit modal */}
       {editModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div className="card" style={{ width: 360, maxWidth: "90%" }}>
+          <div className="card" style={{ width: 420, maxWidth: "92%", maxHeight: "85vh", overflowY: "auto" }}>
             <h3 style={{ fontSize: 16, fontWeight: 500, marginBottom: 12 }}>✏️ {t("customize", locale)}: {editModal.name}</h3>
+
+            {editModal.alternatives && editModal.alternatives.length > 0 && (
+              <div style={{ marginBottom: 14, padding: 10, background: "#f8f7f4", borderRadius: 8, border: "1px solid #ede9e2" }}>
+                <label style={{ fontSize: 12, color: "#1a6b4a", fontWeight: 600, display: "block", marginBottom: 6 }}>
+                  🔄 Reemplazar por una alternativa sugerida
+                </label>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <label style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12, cursor: "pointer" }}>
+                    <input type="radio" name="alt" checked={editAltIdx === -1} onChange={() => setEditAltIdx(-1)} />
+                    <span style={{ color: "#555" }}>Mantener: <strong>{editModal.name}</strong></span>
+                  </label>
+                  {editModal.alternatives.map((a, i) => (
+                    <label key={i} style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12, cursor: "pointer", padding: 6, borderRadius: 6, background: editAltIdx === i ? "#e8f5ef" : "transparent" }}>
+                      <input type="radio" name="alt" checked={editAltIdx === i} onChange={() => setEditAltIdx(i)} />
+                      <span>
+                        <strong>{a.name}</strong> {a.price && <span style={{ color: "#1a6b4a" }}>· {a.price}</span>} {a.rating && <span style={{ color: "#854f0b" }}>· ★ {a.rating}</span>}
+                        <div style={{ color: "#666", marginTop: 2 }}>{a.description}</div>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div style={{ marginBottom: 10 }}>
               <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>{t("placeName", locale)}</label>
-              <input type="text" value={editName} onChange={e => setEditName(e.target.value)}
-                style={{ width: "100%", padding: "8px 10px", border: "1px solid #ede9e2", borderRadius: 8, fontSize: 13 }} />
+              <input type="text" value={editName} onChange={e => setEditName(e.target.value)} disabled={editAltIdx >= 0}
+                style={{ width: "100%", padding: "8px 10px", border: "1px solid #ede9e2", borderRadius: 8, fontSize: 13, opacity: editAltIdx >= 0 ? 0.5 : 1 }} />
             </div>
             <div style={{ marginBottom: 14 }}>
               <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>{t("personalNote", locale)}</label>
               <textarea value={editNote} onChange={e => setEditNote(e.target.value)}
-                style={{ width: "100%", padding: "8px 10px", border: "1px solid #ede9e2", borderRadius: 8, fontSize: 13, height: 80, resize: "vertical", fontFamily: "inherit" }} />
+                style={{ width: "100%", padding: "8px 10px", border: "1px solid #ede9e2", borderRadius: 8, fontSize: 13, height: 70, resize: "vertical", fontFamily: "inherit" }} />
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={() => setEditModal(null)}
@@ -279,7 +313,7 @@ export default function ItineraryView({ data, locale, onReset, form }: Props) {
 function DayCard({ day, index, open, onToggle, edits, onEdit, locale }: {
   day: ItineraryDay; index: number; open: boolean;
   onToggle: () => void; edits: UserEdits;
-  onEdit: (id: string, name: string) => void; locale: Locale;
+  onEdit: (item: ItineraryItem) => void; locale: Locale;
 }) {
   return (
     <div className="card" style={{ marginBottom: 10, padding: 0, overflow: "hidden" }}>
@@ -296,42 +330,49 @@ function DayCard({ day, index, open, onToggle, edits, onEdit, locale }: {
 
       {open && day.items.map(item => {
         const edit = edits[item.id] ?? {};
-        const name = edit.name ?? item.name;
-        const bd = BADGE[item.type] ?? BADGE.sight;
-        const isSight = item.type === "sight" || item.type === "beach" || item.type === "event";
+        const rep = edit.replacement;
+        const displayItem: ItineraryItem = rep
+          ? { ...item, name: rep.name, description: rep.description, type: (rep.type ?? displayItem.type) as ItineraryItem["type"],
+              duration: rep.duration ?? displayItem.duration, transport: rep.transport ?? displayItem.transport,
+              transportTime: rep.transportTime ?? displayItem.transportTime, price: rep.price ?? displayItem.price,
+              rating: rep.rating ?? displayItem.rating, tip: rep.tip ?? displayItem.tip, links: undefined, wikidataDescription: undefined, viatorUrl: undefined }
+          : item;
+        const name = edit.name ?? displayItem.name;
+        const bd = BADGE[displayItem.type] ?? BADGE.sight;
+        const isSight = displayItem.type === "sight" || displayItem.type === "beach" || displayItem.type === "event";
         return (
           <div key={item.id} className="tl-item">
             <div className="tl-time">{item.time}</div>
             <div className="tl-body">
               <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, padding: "2px 8px", borderRadius: 10, marginBottom: 4, background: bd.bg, color: bd.color, fontWeight: 500 }}>
-                {item.type}
+                {displayItem.type}
               </span>
               <div style={{ fontSize: 13, fontWeight: 500, color: "#1a1a18", marginBottom: 2 }}>{name}</div>
-              <div style={{ fontSize: 12, color: "#666", lineHeight: 1.5 }}>{item.description}</div>
+              <div style={{ fontSize: 12, color: "#666", lineHeight: 1.5 }}>{displayItem.description}</div>
 
-              {item.wikidataDescription && (
-                <div style={{ fontSize: 11, color: "#777", marginTop: 4, fontStyle: "italic", lineHeight: 1.5 }}>📖 {item.wikidataDescription}</div>
+              {displayItem.wikidataDescription && (
+                <div style={{ fontSize: 11, color: "#777", marginTop: 4, fontStyle: "italic", lineHeight: 1.5 }}>📖 {displayItem.wikidataDescription}</div>
               )}
               {edit.note && (<div style={{ fontSize: 11, color: "#1a6b4a", marginTop: 4, padding: "4px 8px", background: "#e8f5ef", borderRadius: 6 }}>📝 {edit.note}</div>)}
-              {item.tip && (<div style={{ fontSize: 11, color: "#3c3489", marginTop: 4, padding: "3px 8px", background: "#eeedfe", borderRadius: 6 }}>💡 {item.tip}</div>)}
+              {displayItem.tip && (<div style={{ fontSize: 11, color: "#3c3489", marginTop: 4, padding: "3px 8px", background: "#eeedfe", borderRadius: 6 }}>💡 {displayItem.tip}</div>)}
 
               <div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
-                {item.duration && <span style={{ fontSize: 11, color: "#888" }}>⏱ {item.duration}</span>}
-                {item.transport && item.type !== "transport" && <span style={{ fontSize: 11, color: "#888" }}>🚶 {item.transport} {item.transportTime ?? ""}</span>}
-                {item.rating && <span style={{ fontSize: 11, color: "#854f0b" }}>★ {item.rating}</span>}
-                {item.price && <span style={{ fontSize: 11, color: "#1a6b4a", fontWeight: 500 }}>{item.price}</span>}
+                {displayItem.duration && <span style={{ fontSize: 11, color: "#888" }}>⏱ {displayItem.duration}</span>}
+                {displayItem.transport && displayItem.type !== "transport" && <span style={{ fontSize: 11, color: "#888" }}>🚶 {displayItem.transport} {displayItem.transportTime ?? ""}</span>}
+                {displayItem.rating && <span style={{ fontSize: 11, color: "#854f0b" }}>★ {displayItem.rating}</span>}
+                {displayItem.price && <span style={{ fontSize: 11, color: "#1a6b4a", fontWeight: 500 }}>{displayItem.price}</span>}
               </div>
 
-              {isSight && item.links && (
+              {isSight && displayItem.links && (
                 <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                  {item.links.googleMaps && (<a href={item.links.googleMaps} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>🗺 Maps</a>)}
-                  {item.links.tripAdvisor && (<a href={item.links.tripAdvisor} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>⭐ TripAdvisor</a>)}
-                  {item.links.wikipedia && (<a href={item.links.wikipedia} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>📚 Wikipedia</a>)}
-                  {item.viatorUrl && (<a href={item.viatorUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #e85d26", borderRadius: 6, textDecoration: "none", color: "#e85d26", background: "#fdf0eb" }}>🎫 Reservar tour</a>)}
+                  {displayItem.links.googleMaps && (<a href={displayItem.links.googleMaps} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>🗺 Maps</a>)}
+                  {displayItem.links.tripAdvisor && (<a href={displayItem.links.tripAdvisor} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>⭐ TripAdvisor</a>)}
+                  {displayItem.links.wikipedia && (<a href={displayItem.links.wikipedia} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ddd", borderRadius: 6, textDecoration: "none", color: "#444", background: "#f9f9f9" }}>📚 Wikipedia</a>)}
+                  {displayItem.viatorUrl && (<a href={displayItem.viatorUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #e85d26", borderRadius: 6, textDecoration: "none", color: "#e85d26", background: "#fdf0eb" }}>🎫 Reservar tour</a>)}
                 </div>
               )}
 
-              <button onClick={() => onEdit(item.id, name)}
+              <button onClick={() => onEdit(item)}
                 style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ede9e2", borderRadius: 6, background: "transparent", color: "#888", cursor: "pointer", marginTop: 8 }}>
                 ✏️ {t("customize", locale)}
               </button>
