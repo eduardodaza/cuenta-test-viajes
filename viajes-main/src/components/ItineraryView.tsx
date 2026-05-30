@@ -332,10 +332,10 @@ function DayCard({ day, index, open, onToggle, edits, onEdit, locale }: {
         const edit = edits[item.id] ?? {};
         const rep = edit.replacement;
         const displayItem: ItineraryItem = rep
-          ? { ...item, name: rep.name, description: rep.description, type: (rep.type ?? displayItem.type) as ItineraryItem["type"],
-              duration: rep.duration ?? displayItem.duration, transport: rep.transport ?? displayItem.transport,
-              transportTime: rep.transportTime ?? displayItem.transportTime, price: rep.price ?? displayItem.price,
-              rating: rep.rating ?? displayItem.rating, tip: rep.tip ?? displayItem.tip, links: undefined, wikidataDescription: undefined, viatorUrl: undefined }
+          ? { ...item, name: rep.name, description: rep.description, type: (rep.type ?? item.type) as ItineraryItem["type"],
+              duration: rep.duration ?? item.duration, transport: rep.transport ?? item.transport,
+              transportTime: rep.transportTime ?? item.transportTime, price: rep.price ?? item.price,
+              rating: rep.rating ?? item.rating, tip: rep.tip ?? item.tip, links: undefined, wikidataDescription: undefined, viatorUrl: undefined }
           : item;
         const name = edit.name ?? displayItem.name;
         const bd = BADGE[displayItem.type] ?? BADGE.sight;
