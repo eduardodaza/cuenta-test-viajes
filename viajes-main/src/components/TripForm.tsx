@@ -37,6 +37,43 @@ export default function TripForm({ onSubmit, loading, locale }: Props) {
   const [dayEndTime, setDayEndTime] = useState("23:00");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [dateRange, setDateRange] = useState("");
+  const [citySuggestions, setCitySuggestions] = useState<{ city: string; country: string }[]>([]);
+  const [showCitySuggest, setShowCitySuggest] = useState(false);
+
+  // Autocomplete de ciudad → autocompleta país. Usa Nominatim (gratis, sin key).
+  // Si Nominatim falla o tarda, el usuario igual puede escribir manualmente.
+  useEffect(() => {
+    const q = city.trim();
+    if (q.length < 2) { setCitySuggestions([]); return; }
+    const ctrl = new AbortController();
+    const tm = setTimeout(async () => {
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?city=${encodeURIComponent(q)}&format=json&addressdetails=1&limit=6&accept-language=${locale}`;
+        const res = await fetch(url, {
+          signal: ctrl.signal,
+          headers: { "Accept": "application/json" },
+        });
+        if (!res.ok) return;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data: any[] = await res.json();
+        const seen = new Set<string>();
+        const list: { city: string; country: string }[] = [];
+        for (const r of data) {
+          const a = r.address || {};
+          const cityName = a.city || a.town || a.village || a.municipality || a.county || r.display_name?.split(",")[0];
+          const countryName = a.country;
+          if (!cityName || !countryName) continue;
+          const k = `${cityName}|${countryName}`.toLowerCase();
+          if (seen.has(k)) continue;
+          seen.add(k);
+          list.push({ city: cityName, country: countryName });
+          if (list.length >= 6) break;
+        }
+        setCitySuggestions(list);
+      } catch { /* silent */ }
+    }, 300);
+    return () => { ctrl.abort(); clearTimeout(tm); };
+  }, [city, locale]);
 
   useEffect(() => {
     const today = new Date();
@@ -101,17 +138,34 @@ export default function TripForm({ onSubmit, loading, locale }: Props) {
       <form onSubmit={handleSubmit} className="space-y-8 md:space-y-10">
         {/* Location */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 sm:gap-8">
-          <div className="space-y-2">
+          <div className="space-y-2 relative">
             <label className="text-[10px] uppercase tracking-widest text-muted block">{t("city", locale)}</label>
-            <input type="text" value={city} onChange={(e) => setCity(e.target.value)}
+            <input type="text" value={city}
+              onChange={(e) => { setCity(e.target.value); setShowCitySuggest(true); }}
+              onFocus={() => setShowCitySuggest(true)}
+              onBlur={() => setTimeout(() => setShowCitySuggest(false), 200)}
+              autoComplete="off"
               placeholder={locale === "es" ? "Ej. Barcelona" : "e.g. Kyoto"}
               className={`w-full text-xl md:text-2xl font-display italic bg-transparent border-b ${errors.city ? "border-red-500" : "border-border"} focus:border-primary outline-none py-2 transition-colors placeholder:text-foreground/30`} />
+            {showCitySuggest && citySuggestions.length > 0 && (
+              <ul className="absolute left-0 right-0 top-full z-30 bg-white border border-border shadow-lg max-h-64 overflow-auto text-sm">
+                {citySuggestions.map((s, i) => (
+                  <li key={i}
+                    onMouseDown={(e) => { e.preventDefault(); setCity(s.city); setCountry(s.country); setShowCitySuggest(false); }}
+                    className="px-3 py-2 cursor-pointer hover:bg-black/5">
+                    <span className="font-medium">{s.city}</span>
+                    <span className="text-muted"> · {s.country}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
             {errors.city && <p className="text-red-600 text-[11px]">{errors.city}</p>}
           </div>
           <div className="space-y-2">
             <label className="text-[10px] uppercase tracking-widest text-muted block">{t("country", locale)}</label>
             <input type="text" value={country} onChange={(e) => setCountry(e.target.value)}
               placeholder={locale === "es" ? "España" : "Japan"}
+              autoComplete="off"
               className={`w-full text-xl md:text-2xl font-display italic bg-transparent border-b ${errors.country ? "border-red-500" : "border-border"} focus:border-primary outline-none py-2 transition-colors placeholder:text-foreground/30`} />
             {errors.country && <p className="text-red-600 text-[11px]">{errors.country}</p>}
           </div>
