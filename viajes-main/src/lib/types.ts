@@ -15,6 +15,8 @@ export interface ItineraryItem {
   bookingUrl?: string;
   wikidataDescription?: string;
   viatorUrl?: string;
+  lat?: number;
+  lon?: number;
   links?: {
     googleMaps?: string;
     tripAdvisor?: string;
@@ -118,6 +120,10 @@ export interface TripFormData {
   budget: Budget;
   interests: string[];
   locale: Locale;
+  /** HH:MM 24h — hora a la que el cliente quiere empezar el día (default 08:00) */
+  dayStartTime?: string;
+  /** HH:MM 24h — hora a la que el cliente quiere terminar el día (default 23:00) */
+  dayEndTime?: string;
 }
 
 // ─── User edits (personalization) ─────────────────────────────
