@@ -298,7 +298,10 @@ async function enrichRestaurantData(restaurants: any[], city: string) {
   } catch { /* silent */ }
 }
 
-// ── Geoapify ──────────────────────────────────────────────────
+// ── Geoapify (alternatives only — NUNCA pushear como item nuevo) ─
+// Para evitar duplicar el slot "10:00" en el Día 1 con POIs sueltos,
+// los POIs de Geoapify se inyectan SOLO como alternativas en items
+// existentes de tipo "sight" del primer día.
 async function enrichWithGeoapify(itinerary: ItineraryData, form: TripFormData) {
   const key = process.env.GEOAPIFY_API_KEY;
   if (!key) return;
@@ -308,27 +311,85 @@ async function enrichWithGeoapify(itinerary: ItineraryData, form: TripFormData) 
     const coords = geoData?.features?.[0]?.geometry?.coordinates;
     if (!coords) return;
     const [lon, lat] = coords;
-    const poiRes = await fetch(`https://api.geoapify.com/v2/places?categories=tourism.attraction,tourism.sights,entertainment.museum&filter=circle:${lon},${lat},5000&limit=6&apiKey=${key}`);
+    const poiRes = await fetch(`https://api.geoapify.com/v2/places?categories=tourism.attraction,tourism.sights,entertainment.museum&filter=circle:${lon},${lat},6000&limit=12&apiKey=${key}`);
     const poiData = await poiRes.json();
-    if (itinerary.days?.[0]) {
-      for (const place of (poiData?.features ?? []).slice(0, 3)) {
-        const props = place.properties;
-        const name = props?.name;
-        if (!name) continue;
-        const alreadyIn = itinerary.days[0].items.some((item: { name: string }) => item.name.toLowerCase() === name.toLowerCase());
-        if (!alreadyIn) {
-          itinerary.days[0].items.push({
-            id: `geo_${Math.random().toString(36).slice(2, 8)}`,
-            time: "10:00", type: "sight", name,
-            description: `${props.categories?.[0] ?? "Attraction"} in ${form.city}.`,
-            duration: "1h", transport: "walking", transportTime: "varies",
-            price: "$", rating: "",
-            tip: props.website ? `Visit: ${props.website}` : "",
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pois = ((poiData?.features ?? []) as any[])
+      .map((p) => ({
+        name: p?.properties?.name as string,
+        cat: (p?.properties?.categories?.[0] as string) ?? "Attraction",
+        website: p?.properties?.website as string | undefined,
+      }))
+      .filter((p) => p.name);
+    if (!pois.length) return;
+
+    // Set de nombres ya usados en TODO el itinerario para no repetir.
+    const used = new Set<string>();
+    for (const d of itinerary.days ?? []) {
+      for (const it of d.items ?? []) {
+        used.add(it.name.toLowerCase());
+        for (const a of it.alternatives ?? []) used.add(a.name.toLowerCase());
+      }
+    }
+
+    // Inyecta como alternativas en items "sight" del día 1, 2 y 3 (si existen)
+    for (const day of (itinerary.days ?? []).slice(0, 3)) {
+      const sightItems = (day.items ?? []).filter((i) => i.type === "sight" || i.type === "event");
+      for (const item of sightItems) {
+        item.alternatives = item.alternatives ?? [];
+        if (item.alternatives.length >= 3) continue;
+        for (const p of pois) {
+          if (used.has(p.name.toLowerCase())) continue;
+          if (item.alternatives.length >= 3) break;
+          item.alternatives.push({
+            name: p.name,
+            description: `${p.cat} in ${form.city}.`,
+            type: "sight",
+            duration: "1h",
+            transport: "walking",
+            transportTime: "varies",
+            price: item.price ?? "$$",
+            rating: "",
+            tip: p.website ? `Visit: ${p.website}` : "",
           });
+          used.add(p.name.toLowerCase());
         }
       }
     }
   } catch { /* silent */ }
+}
+
+// ── Normalización horaria por día ─────────────────────────────
+// 1) Convierte cualquier "HH:MM" raro a minutos.
+// 2) Si hay items con la MISMA hora, los espacia hacia adelante.
+// 3) Garantiza orden ascendente y mantiene todo dentro de [dayStart, dayEnd].
+function timeToMin(t: string): number {
+  const m = /^(\d{1,2}):(\d{2})/.exec(t || "");
+  if (!m) return 0;
+  return Math.min(23 * 60 + 59, Math.max(0, parseInt(m[1], 10) * 60 + parseInt(m[2], 10)));
+}
+function minToTime(min: number): string {
+  const h = Math.floor(min / 60), m = min % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+function normalizeDayTimes(itinerary: ItineraryData, dayStart: string, dayEnd: string) {
+  const start = timeToMin(dayStart || "08:00");
+  const end   = timeToMin(dayEnd   || "23:00");
+  for (const day of itinerary.days ?? []) {
+    if (!day.items?.length) continue;
+    // Orden por hora original
+    day.items.sort((a, b) => timeToMin(a.time) - timeToMin(b.time));
+    let prev = -1;
+    for (let i = 0; i < day.items.length; i++) {
+      let t = timeToMin(day.items[i].time);
+      if (t < start) t = start;
+      if (t > end)   t = end;
+      // Evitar empate o retroceso: separar al menos 30 min
+      if (t <= prev) t = Math.min(end, prev + 30);
+      day.items[i].time = minToTime(t);
+      prev = t;
+    }
+  }
 }
 
 // ── Main handler ──────────────────────────────────────────────
@@ -433,6 +494,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // 6. Restaurantes + Geoapify
     await enrichRestaurantData(itinerary.restaurants as unknown[], form.city);
     await enrichWithGeoapify(itinerary, form);
+
+    // 7. Normalizar horas: únicas, ascendentes, dentro de la ventana del cliente
+    normalizeDayTimes(itinerary, form.dayStartTime || "08:00", form.dayEndTime || "23:00");
 
     itinerary.generatedBy = `Groq LLaMA 3.3 70B · ${sources.length ? sources.join(" · ") : "no external events"} · Wikidata`;
 
