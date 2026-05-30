@@ -1,4 +1,17 @@
+// src/lib/types.ts
 // ─── Core itinerary types ──────────────────────────────────────
+
+export interface ItineraryAlternative {
+  name: string;
+  description: string;
+  type?: "sight" | "food" | "transport" | "event" | "alert" | "beach" | "night";
+  duration?: string;
+  transport?: string;
+  transportTime?: string;
+  price?: string;
+  rating?: string;
+  tip?: string;
+}
 
 export interface ItineraryItem {
   id: string;
@@ -23,6 +36,8 @@ export interface ItineraryItem {
     wikipedia?: string;
     viator?: string;
   };
+  /** 2–3 sugerencias alternativas para reemplazar esta actividad en el mismo bloque */
+  alternatives?: ItineraryAlternative[];
 }
 
 export interface ItineraryDay {
@@ -43,6 +58,8 @@ export interface Restaurant {
   source: string;
   bookingUrl?: string;
   address?: string;
+  dayHint?: number;
+  mealHint?: "breakfast" | "lunch" | "dinner" | "snack";
   links?: {
     googleMaps?: string;
     tripAdvisor?: string;
@@ -91,7 +108,6 @@ export interface ItineraryData {
   weather?: {
     maxTemp: number;
     minTemp: number;
-    seaTemp?: number;
     description: string;
   };
   estimatedBudgetPerDay: string;
@@ -120,9 +136,7 @@ export interface TripFormData {
   budget: Budget;
   interests: string[];
   locale: Locale;
-  /** HH:MM 24h — hora a la que el cliente quiere empezar el día (default 08:00) */
   dayStartTime?: string;
-  /** HH:MM 24h — hora a la que el cliente quiere terminar el día (default 23:00) */
   dayEndTime?: string;
 }
 
@@ -132,6 +146,8 @@ export interface UserEdit {
   name?: string;
   note?: string;
   removed?: boolean;
+  /** Reemplazo completo cuando el usuario elige una alternativa */
+  replacement?: ItineraryAlternative;
 }
 
 export type UserEdits = Record<string, UserEdit>;
