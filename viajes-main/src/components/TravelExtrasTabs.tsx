@@ -128,7 +128,7 @@ function buildBookingCarsUrl(opts: { city: string; country?: string; from: strin
     "puYear": a.y, "puMonth": a.mm, "puDay": a.d, "puHour": "10", "puMinute": "0",
     "doYear": b.y, "doMonth": b.mm, "doDay": b.d, "doHour": "10", "doMinute": "0",
   });
-  return `https://cars.booking.com/searchresults.html?${params.toString()}`;
+  return `https://www.booking.com/cars/searchresults.html?${params.toString()}`;
 }
 
 function buildKayakCarsUrl(opts: { city: string; from: string; to: string }): string {
@@ -196,22 +196,38 @@ const APP_URLS: Array<{ match: RegExp; url: string }> = [
   { match: /\byandex\b/i,       url: "https://yandex.com/maps/" },
   { match: /\bcareem\b/i,       url: "https://www.careem.com/" },
 ];
-function resolveTransportUrl(name: string, providedUrl: string | undefined, city: string): string {
+function resolveTransportUrl(name: string, providedUrl: string | undefined, city: string, country?: string, type?: string): string {
+  const normalizedName = normalizeCityKey(name);
+  const normalizedType = normalizeCityKey(type);
+  const officialTaxi = `https://www.google.com/maps/search/${encodeURIComponent(`Taxi oficial ${city} ${country || ""}`)}`;
+  const airportTransfer = `https://www.google.com/search?q=${encodeURIComponent(`traslado aeropuerto oficial ${city} ${country || ""}`)}`;
+
+  // Aerocity y TaxiMadrid han dado timeouts/certificados inválidos; nunca enlazamos directo a esos dominios.
+  if (/aerocity|taxidemadrid|taxi de madrid|taxi.?madrid/.test(normalizedName)) {
+    return normalizedType.includes("aerop") || normalizedName.includes("aerocity") ? airportTransfer : officialTaxi;
+  }
+
   if (isValidHttpUrl(providedUrl)) {
-    // Filtramos URLs claramente hardcodeadas a una ciudad ajena (aerocity.com, taxidemadrid.com, etc.)
-    // si la URL contiene un nombre de ciudad ≠ destino, la descartamos.
+    const parsed = new URL(providedUrl!);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
     const u = providedUrl!.toLowerCase();
+    const badDomains = ["aerocity.com", "taxidemadrid.com"];
+    const isBlocked = badDomains.some(d => host === d || host.endsWith(`.${d}`));
     const cityKey = normalizeCityKey(city).replace(/\s+/g, "");
     const blacklist = ["madrid", "barcelona", "paris", "london", "roma", "rome", "berlin", "lisboa", "lisbon", "amsterdam"];
     const hardcodedToOther = blacklist.some(c => u.includes(c) && c !== cityKey && !u.includes(cityKey));
-    if (!hardcodedToOther) return providedUrl!;
+    if (!isBlocked && !hardcodedToOther) return providedUrl!;
   }
-  // Match por nombre conocido
+
   for (const a of APP_URLS) {
     if (a.match.test(name)) return a.url;
   }
-  // Fallback genérico: Google Maps Transit / búsqueda en Maps
-  return `https://www.google.com/maps/search/${encodeURIComponent(name + " " + city)}`;
+  if (normalizedType.includes("aerop") || normalizedName.includes("airport") || normalizedName.includes("aeropuerto")) return airportTransfer;
+  if (normalizedType.includes("taxi") || normalizedName.includes("taxi")) return officialTaxi;
+  if (/metro|bus|tranv|train|tren|transit|public|publico|público/.test(normalizedName + " " + normalizedType)) {
+    return `https://www.google.com/maps/dir/?api=1&travelmode=transit&destination=${encodeURIComponent(`${city}, ${country || ""}`)}`;
+  }
+  return `https://www.google.com/maps/search/${encodeURIComponent(`${name || "transporte"} ${city} ${country || ""}`)}`;
 }
 
 /* --------------------------------- component --------------------------------- */
@@ -299,7 +315,7 @@ export default function TravelExtrasTabs(props: Props) {
           <>
             {tab === "flights"   && <FlightsList   items={data.flights}   trip={trip} />}
             {tab === "cars"      && <CarsList      items={data.cars}      trip={trip} />}
-            {tab === "transport" && <TransportList items={data.transport} city={props.city} />}
+            {tab === "transport" && <TransportList items={data.transport} city={props.city} country={props.country} />}
             {tab === "tours"     && <ToursList     items={data.tours}     trip={trip} />}
             <p className="mt-4 text-xs text-gray-400">
               Origen detectado: {effOriginCity || "—"}{effOriginIATA ? ` (${effOriginIATA})` : ""} ·
@@ -402,12 +418,12 @@ function CarsList({ items, trip }: { items: any[]; trip: TripLinks }) {
   );
 }
 
-function TransportList({ items, city }: { items: any[]; city: string }) {
+function TransportList({ items, city, country }: { items: any[]; city: string; country?: string }) {
   if (!items.length) return <Empty />;
   return (
     <div className="grid gap-3 md:grid-cols-2">
       {items.map((t, i) => {
-        const safeUrl = resolveTransportUrl(t.name || "", t.bookUrl, city);
+        const safeUrl = resolveTransportUrl(t.name || "", t.bookUrl, city, country, t.type);
         const rome2rio = `https://www.rome2rio.com/map/${encodeURIComponent(city)}`;
         return (
           <Card key={i}>
