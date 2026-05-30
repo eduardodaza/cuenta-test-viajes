@@ -41,6 +41,77 @@ function daysBetween(from: string, to: string) {
   return Math.max(1, Math.round((b - a) / 86400000));
 }
 
+function fallbackFlights(originCity: string, originIATA: string | undefined, destCity: string, destIATA: string | undefined) {
+  return [{
+    source: "metasearch-fallback",
+    airline: "Comparar aerolíneas",
+    airlineCode: undefined,
+    stops: 0,
+    estDurationHrs: undefined,
+    price: { amount: undefined, currency: "USD", estimated: true },
+    notes: `Abre Google Flights o Skyscanner para comparar ${originIATA || originCity || "tu ciudad"} → ${destIATA || destCity}.`,
+  }];
+}
+
+function fallbackCars(city: string, country: string, from: string, to: string) {
+  const days = daysBetween(from, to);
+  return [
+    { company: "Booking.com Cars", category: "Comparador", exampleModel: "Económico / SUV / Premium", estPricePerDayUSD: 35, pickupHint: `${city}, ${country}` },
+    { company: "Kayak Cars", category: "Comparador", exampleModel: "Todas las agencias disponibles", estPricePerDayUSD: 38, pickupHint: `Aeropuerto o centro de ${city}` },
+    { company: "Sixt / Hertz / Avis", category: "Agencias internacionales", exampleModel: "Según disponibilidad local", estPricePerDayUSD: 45, pickupHint: `Oficinas principales en ${city}` },
+  ].map((c) => ({
+    source: "fallback",
+    company: c.company,
+    category: c.category,
+    exampleModel: c.exampleModel,
+    pickupHint: c.pickupHint,
+    price: { perDay: c.estPricePerDayUSD, total: c.estPricePerDayUSD * days, currency: "USD", estimated: true },
+  }));
+}
+
+function fallbackTransport(city: string, country: string) {
+  return [
+    { type: "Mapa / rutas", name: "Google Maps Transit", estPriceUSD: "variable", coverage: "Rutas de transporte público, caminata y taxi", safetyTip: "Confirma horarios el mismo día.", bookUrl: `https://www.google.com/maps/dir/?api=1&travelmode=transit&destination=${enc(`${city}, ${country}`)}` },
+    { type: "Ride-hailing", name: "Uber", estPriceUSD: "variable", coverage: "Según disponibilidad local", safetyTip: "Verifica placa y conductor en la app.", bookUrl: "https://m.uber.com/" },
+    { type: "Taxi", name: "Taxi oficial", estPriceUSD: "variable", coverage: `Zonas principales de ${city}`, safetyTip: "Usa paradas oficiales o reserva desde hotel/app confiable.", bookUrl: `https://www.google.com/maps/search/${enc(`Taxi oficial ${city} ${country}`)}` },
+    { type: "Traslado aeropuerto", name: "Traslado aeropuerto oficial", estPriceUSD: "variable", coverage: `Aeropuerto ↔ ${city}`, safetyTip: "Evita conductores no autorizados dentro del aeropuerto.", bookUrl: `https://www.google.com/search?q=${enc(`traslado aeropuerto oficial ${city} ${country}`)}` },
+    { type: "Planificador", name: "Rome2Rio", estPriceUSD: "variable", coverage: "Rutas entre aeropuertos, estaciones y barrios", safetyTip: "Compara duración antes de reservar.", bookUrl: `https://www.rome2rio.com/map/${enc(city)}` },
+  ].map((o) => ({ source: "fallback", ...o, rome2rio: `https://www.rome2rio.com/map/${enc(city)}` }));
+}
+
+function sanitizeTransportOption(o: any, city: string, country: string) {
+  const rawName = String(o.name || "").trim();
+  const rawType = String(o.type || "").trim();
+  const badName = /aerocity|taxidemadrid|taxi\s*de\s*madrid|taxi.?madrid/i.test(rawName);
+  const isAirport = /aerop|airport|express|shuttle|traslado/i.test(`${rawType} ${rawName}`);
+  const matched = Object.entries(RIDE_APPS).find(([k]) => k.toLowerCase() === rawName.toLowerCase());
+  const name = badName ? (isAirport ? "Traslado aeropuerto oficial" : "Taxi oficial") : rawName;
+  const type = rawType || (isAirport ? "Traslado aeropuerto" : "Transporte");
+  let bookUrl: string | undefined;
+
+  if (matched && !badName) bookUrl = matched[1].url;
+  else if (/metro|bus|tranv|bici|bike|bike-sharing|tren|transporte público|transporte publico/i.test(`${name} ${type}`)) {
+    bookUrl = `https://www.google.com/maps/dir/?api=1&travelmode=transit&destination=${enc(`${city}, ${country}`)}`;
+  } else if (isAirport) {
+    bookUrl = `https://www.google.com/search?q=${enc(`traslado aeropuerto oficial ${city} ${country}`)}`;
+  } else if (/taxi/i.test(`${name} ${type}`)) {
+    bookUrl = `https://www.google.com/maps/search/${enc(`Taxi oficial ${city} ${country}`)}`;
+  } else {
+    bookUrl = `https://www.google.com/maps/search/${enc(`${name} ${city} ${country}`)}`;
+  }
+
+  return {
+    source: "llm-curated",
+    type,
+    name,
+    estPriceUSD: o.estPriceUSD,
+    coverage: o.coverage,
+    safetyTip: o.safetyTip,
+    bookUrl,
+    rome2rio: `https://www.rome2rio.com/map/${enc(city)}`,
+  };
+}
+
 /* --------------------------------- VUELOS --------------------------------- */
 async function getAmadeusToken(): Promise<string | null> {
   const id = process.env.AMADEUS_CLIENT_ID;
@@ -98,7 +169,9 @@ async function fetchFlightsLLM(
     sys, u,
     `{"flights":[{"airline":"Avianca","airlineCode":"AV","stops":0,"estDurationHrs":1.2,"estPriceUSD":120,"notes":"directo"}]}`,
   );
-  return (data?.flights ?? []).map((f) => ({
+  const list = data?.flights ?? [];
+  if (!list.length) return fallbackFlights(originCity, originIATA, destCity, destIATA);
+  return list.map((f) => ({
     source: "llm-curated",
     airline: f.airline, airlineCode: f.airlineCode, stops: f.stops,
     estDurationHrs: f.estDurationHrs,
@@ -117,8 +190,10 @@ async function fetchCars(city: string, country: string, from: string, to: string
     sys, u,
     `{"cars":[{"company":"Localiza","category":"Económico","exampleModel":"Chevrolet Onix","estPricePerDayUSD":35,"pickupHint":"Aeropuerto"}]}`,
   );
+  const list = data?.cars ?? [];
+  if (!list.length) return fallbackCars(city, country, from, to);
   const days = daysBetween(from, to);
-  return (data?.cars ?? []).map((c) => ({
+  return list.map((c) => ({
     source: "llm-curated",
     company: c.company, category: c.category, exampleModel: c.exampleModel, pickupHint: c.pickupHint,
     price: {
@@ -165,26 +240,15 @@ Otras categorías permitidas: "Transporte público" (metro, BRT, bus, tranvía c
     sys, u,
     `{"options":[{"type":"Ride-hailing","name":"Uber","estPriceUSD":"2-8","coverage":"Toda la ciudad","safetyTip":"Verifica placa"}]}`,
   );
-  return (data?.options ?? []).map((o) => {
-    // bookUrl SIEMPRE desde backend
-    let bookUrl: string | undefined;
-    const matched = Object.entries(RIDE_APPS).find(([k]) => k.toLowerCase() === (o.name || "").toLowerCase());
-    if (matched) bookUrl = matched[1].url;
-    else if (/metro|bus|tranv|bici|bike|bike-sharing|tren/i.test(o.name)) {
-      bookUrl = `https://www.google.com/maps/dir/?api=1&travelmode=transit&destination=${enc(`${city}, ${country}`)}`;
-    } else if (/aerop|airport|express|shuttle/i.test(o.type)) {
-      bookUrl = `https://www.google.com/search?q=${enc(`${o.name} ${city} ${country} oficial`)}`;
-    } else {
-      bookUrl = `https://www.google.com/maps/search/${enc(`${o.name} ${city}`)}`;
-    }
-    return {
-      source: "llm-curated",
-      type: o.type, name: o.name, estPriceUSD: o.estPriceUSD,
-      coverage: o.coverage, safetyTip: o.safetyTip,
-      bookUrl,
-      rome2rio: `https://www.rome2rio.com/map/${enc(city)}`,
-    };
-  });
+  const options = (data?.options ?? []).map((o) => sanitizeTransportOption(o, city, country));
+  const fallback = fallbackTransport(city, country);
+  const seen = new Set<string>();
+  return [...options, ...fallback].filter((o) => {
+    const k = `${o.type}-${o.name}`.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).slice(0, 7);
 }
 
 /* ---------------------------------- TOURS --------------------------------- */
@@ -216,8 +280,14 @@ async function fetchTours(city: string, country: string, from: string, to: strin
     sys, u,
     `{"tours":[{"title":"Show Delirio","category":"Nocturno tradicional","durationHrs":4,"estPriceUSD":60,"whyIconic":"Ícono de la salsa caleña","bestTimeOfDay":"noche"}]}`,
   );
-  return (data?.tours ?? []).map((t) => ({
-    source: "llm-curated", ...t,
+  const list = data?.tours ?? [];
+  const fallback = [
+    { title: `Tours icónicos en ${city}`, category: "Cultura", durationHrs: 3, estPriceUSD: 30, whyIconic: `Experiencias y visitas guiadas disponibles en ${city}.`, bestTimeOfDay: "mañana" },
+    { title: `Free walking tour ${city}`, category: "Walking tour", durationHrs: 2, estPriceUSD: 0, whyIconic: "Buena primera orientación por los sectores principales.", bestTimeOfDay: "mañana" },
+    { title: `Gastronomía local en ${city}`, category: "Gastronomía", durationHrs: 3, estPriceUSD: 45, whyIconic: "Permite probar platos representativos con guía local.", bestTimeOfDay: "tarde" },
+  ];
+  return (list.length ? list : fallback).map((t) => ({
+    source: list.length ? "llm-curated" : "fallback", ...t,
     price: { amount: t.estPriceUSD, currency: "USD", estimated: true },
     bookUrl: `https://www.getyourguide.com/s/?q=${enc(`${t.title} ${city}`)}`,
     bookUrlAlt: `https://www.viator.com/searchResults/all?text=${enc(`${t.title} ${city}`)}`,
