@@ -1,6 +1,6 @@
 // src/pages/api/generate.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { buildItineraryPrompt } from "@/lib/prompt";
+import { buildDaysBatchPrompt, buildMetadataPrompt, buildItineraryPrompt } from "@/lib/prompt";
 import type { TripFormData, ItineraryData, Hotel, Event } from "@/lib/types";
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -64,13 +64,8 @@ async function callGroq(prompt: string, maxTokens: number, temperature = 0.7): P
 }
 
 // ── Groq: traditional / recurring / cultural events ───────────
-// Uses LLM knowledge to surface festivals, fairs, carnivals AND iconic
-// recurring shows / nightlife / cultural traditions for the trip window.
-// This is what fixes Cali (Feria de Cali, Delirio, El Mulato) and
-// Medellín (Feria de las Flores, Comuna 13 tour, etc.) when APIs return nothing.
 async function fetchTraditionalEvents(form: TripFormData): Promise<Event[]> {
   const sd = new Date(form.startDate + "T12:00:00");
-  const ed = new Date(form.endDate + "T12:00:00");
   const startMonth = sd.toLocaleString("en", { month: "long" });
   const prompt = `You are a local cultural expert for ${form.city}, ${form.country}.
 List the TOP local events, festivals, fairs, carnivals, sports finals AND
@@ -195,9 +190,6 @@ async function fetchTicketmaster(city: string, startDate: string, endDate: strin
 }
 
 // ── Eventbrite ────────────────────────────────────────────────
-// NOTE: Eventbrite shut down public search in 2020; the free token now only
-// returns events owned by your account. We try anyway in case the user has
-// an org account, but failures are silent.
 async function fetchEventbrite(city: string, startDate: string, endDate: string): Promise<Event[]> {
   const token = process.env.EVENTBRITE_API_KEY;
   if (!token) return [];
@@ -220,7 +212,7 @@ async function fetchEventbrite(city: string, startDate: string, endDate: string)
   } catch { return []; }
 }
 
-// ── RapidAPI — Google Events (real-time) ──────────────────────
+// ── RapidAPI — Google Events ──────────────────────────────────
 async function fetchRapidEvents(city: string, country: string, startDate: string, endDate: string): Promise<Event[]> {
   const key = process.env.RAPIDAPI_KEY;
   if (!key) return [];
@@ -298,10 +290,7 @@ async function enrichRestaurantData(restaurants: any[], city: string) {
   } catch { /* silent */ }
 }
 
-// ── Geoapify (alternatives only — NUNCA pushear como item nuevo) ─
-// Para evitar duplicar el slot "10:00" en el Día 1 con POIs sueltos,
-// los POIs de Geoapify se inyectan SOLO como alternativas en items
-// existentes de tipo "sight" del primer día.
+// ── Geoapify ─────────────────────────────────────────────────
 async function enrichWithGeoapify(itinerary: ItineraryData, form: TripFormData) {
   const key = process.env.GEOAPIFY_API_KEY;
   if (!key) return;
@@ -323,7 +312,6 @@ async function enrichWithGeoapify(itinerary: ItineraryData, form: TripFormData) 
       .filter((p) => p.name);
     if (!pois.length) return;
 
-    // Set de nombres ya usados en TODO el itinerario para no repetir.
     const used = new Set<string>();
     for (const d of itinerary.days ?? []) {
       for (const it of d.items ?? []) {
@@ -332,7 +320,6 @@ async function enrichWithGeoapify(itinerary: ItineraryData, form: TripFormData) 
       }
     }
 
-    // Inyecta como alternativas en items "sight" del día 1, 2 y 3 (si existen)
     for (const day of (itinerary.days ?? []).slice(0, 3)) {
       const sightItems = (day.items ?? []).filter((i) => i.type === "sight" || i.type === "event");
       for (const item of sightItems) {
@@ -360,9 +347,6 @@ async function enrichWithGeoapify(itinerary: ItineraryData, form: TripFormData) 
 }
 
 // ── Normalización horaria por día ─────────────────────────────
-// 1) Convierte cualquier "HH:MM" raro a minutos.
-// 2) Si hay items con la MISMA hora, los espacia hacia adelante.
-// 3) Garantiza orden ascendente y mantiene todo dentro de [dayStart, dayEnd].
 function timeToMin(t: string): number {
   const m = /^(\d{1,2}):(\d{2})/.exec(t || "");
   if (!m) return 0;
@@ -377,19 +361,63 @@ function normalizeDayTimes(itinerary: ItineraryData, dayStart: string, dayEnd: s
   const end   = timeToMin(dayEnd   || "23:00");
   for (const day of itinerary.days ?? []) {
     if (!day.items?.length) continue;
-    // Orden por hora original
     day.items.sort((a, b) => timeToMin(a.time) - timeToMin(b.time));
     let prev = -1;
     for (let i = 0; i < day.items.length; i++) {
       let t = timeToMin(day.items[i].time);
       if (t < start) t = start;
       if (t > end)   t = end;
-      // Evitar empate o retroceso: separar al menos 30 min
       if (t <= prev) t = Math.min(end, prev + 90);
       day.items[i].time = minToTime(t);
       prev = t;
     }
   }
+}
+
+// ── BATCH: genera días en lotes de 2 en paralelo ──────────────
+async function generateDaysBatched(form: TripFormData, totalDays: number): Promise<ItineraryData["days"]> {
+  // Build batch ranges: [1,2], [3,4], [5,6], ...
+  const batches: Array<[number, number]> = [];
+  for (let d = 1; d <= totalDays; d += 2) {
+    batches.push([d, Math.min(d + 1, totalDays)]);
+  }
+
+  // Run all batches in parallel
+  const results = await Promise.allSettled(
+    batches.map(async ([from, to]) => {
+      const prompt = buildDaysBatchPrompt(form, from, to);
+      const raw = await callGroq(prompt, 8000, 0.7);
+      const jsonStr = extractJSONArray(raw);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let arr: any[];
+      try {
+        arr = JSON.parse(jsonStr);
+      } catch {
+        // Attempt repair
+        const fix = await callGroq(
+          `Fix this JSON array and return ONLY a valid JSON array, no explanation:\n\n${jsonStr}`,
+          8000, 0.2
+        );
+        arr = JSON.parse(extractJSONArray(fix));
+      }
+      if (!Array.isArray(arr)) throw new Error(`Batch ${from}-${to} did not return array`);
+      return arr;
+    })
+  );
+
+  // Flatten and sort by dayNum
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allDays: any[] = [];
+  for (const result of results) {
+    if (result.status === "fulfilled") {
+      allDays.push(...result.value);
+    } else {
+      console.error("[generateDaysBatched] batch failed:", result.reason);
+    }
+  }
+
+  allDays.sort((a, b) => (a.dayNum ?? 0) - (b.dayNum ?? 0));
+  return allDays as ItineraryData["days"];
 }
 
 // ── Main handler ──────────────────────────────────────────────
@@ -401,30 +429,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: "Missing required fields" });
   }
 
-  // Default to "on" so traditional + real-time events are ALWAYS fetched.
-  // Override with EVENTS_MODE=off (skip RapidAPI) or cache-only (read cache only) if needed.
   const EVENTS_MODE = (process.env.EVENTS_MODE ?? "on").toLowerCase();
 
   try {
-    // 1. Groq — core itinerary
-    const prompt = buildItineraryPrompt(form);
-    const rawText = await callGroq(prompt, 8000);
-    const jsonStr = extractJSON(rawText);
-    let itinerary: ItineraryData;
-    try { itinerary = JSON.parse(jsonStr); }
-    catch {
-      const fixText = await callGroq(`Fix this JSON and return ONLY valid JSON, no explanation:\n\n${jsonStr}`, 8000, 0.2);
-      itinerary = JSON.parse(extractJSON(fixText));
-    }
-    itinerary.events      = itinerary.events      ?? [];
-    itinerary.alerts      = itinerary.alerts      ?? [];
-    itinerary.restaurants = itinerary.restaurants ?? [];
+    const sd = new Date(form.startDate + "T12:00:00");
+    const ed = new Date(form.endDate + "T12:00:00");
+    const totalDays = Math.round((ed.getTime() - sd.getTime()) / 86400000) + 1;
 
-    // 2. Hotels
-    itinerary.hotels = buildHotelLinks(form);
-
-    // 3. Paralelo: Wikidata + Weather + Ticketmaster + Eventbrite + Traditional(Groq)
-    const [wikidataRes, weatherRes, tmRes, ebRes, tradRes] = await Promise.allSettled([
+    // 1. Parallel: days (batched) + metadata + external data
+    const [
+      daysResult,
+      metadataResult,
+      wikidataRes,
+      weatherRes,
+      tmRes,
+      ebRes,
+      tradRes,
+    ] = await Promise.allSettled([
+      generateDaysBatched(form, totalDays),
+      (async () => {
+        const prompt = buildMetadataPrompt(form);
+        const raw = await callGroq(prompt, 3000, 0.6);
+        const jsonStr = extractJSON(raw);
+        try {
+          return JSON.parse(jsonStr);
+        } catch {
+          const fix = await callGroq(
+            `Fix this JSON and return ONLY valid JSON, no explanation:\n\n${jsonStr}`,
+            3000, 0.2
+          );
+          return JSON.parse(extractJSON(fix));
+        }
+      })(),
       fetchWikidataAttractions(form.city),
       fetchWeather(form.city, form.country),
       fetchTicketmaster(form.city, form.startDate, form.endDate),
@@ -432,6 +468,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       fetchTraditionalEvents(form),
     ]);
 
+    // 2. Assemble itinerary from metadata + days
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let metadata: any = {};
+    if (metadataResult.status === "fulfilled") {
+      metadata = metadataResult.value;
+    } else {
+      console.error("[metadata] failed:", metadataResult.reason);
+      // Fallback: use a single legacy call
+      try {
+        const legacyRaw = await callGroq(buildItineraryPrompt(form), 8000);
+        const legacyParsed = JSON.parse(extractJSON(legacyRaw));
+        metadata = legacyParsed;
+      } catch (e) {
+        console.error("[legacy fallback] also failed:", e);
+      }
+    }
+
+    const itinerary: ItineraryData = {
+      city:                 metadata.city                ?? form.city,
+      country:              metadata.country             ?? form.country,
+      tagline:              metadata.tagline             ?? "",
+      summary:              metadata.summary             ?? "",
+      weather:              metadata.weather             ?? { maxTemp: 25, minTemp: 15, description: "" },
+      estimatedBudgetPerDay: metadata.estimatedBudgetPerDay ?? "",
+      days:                 daysResult.status === "fulfilled" ? daysResult.value : (metadata.days ?? []),
+      restaurants:          metadata.restaurants         ?? [],
+      events:               metadata.events              ?? [],
+      alerts:               metadata.alerts              ?? [],
+      hotels:               buildHotelLinks(form),
+    };
+
+    // 3. Wikidata enrichment
     if (wikidataRes.status === "fulfilled") {
       const wdPlaces = wikidataRes.value;
       for (const day of itinerary.days ?? []) {
@@ -446,15 +514,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
+    // 4. Weather override
     if (weatherRes.status === "fulfilled" && weatherRes.value) {
       itinerary.weather = { ...itinerary.weather, ...weatherRes.value };
     }
 
-    const tmEvents    = tmRes.status === "fulfilled" ? tmRes.value : [];
-    const ebEvents    = ebRes.status === "fulfilled" ? ebRes.value : [];
-    const tradEvents  = tradRes.status === "fulfilled" ? tradRes.value : [];
+    // 5. Events merge
+    const tmEvents   = tmRes.status   === "fulfilled" ? tmRes.value   : [];
+    const ebEvents   = ebRes.status   === "fulfilled" ? ebRes.value   : [];
+    const tradEvents = tradRes.status === "fulfilled" ? tradRes.value : [];
 
-    // 4. RapidAPI — controlado por EVENTS_MODE y cache
     const ckey = cacheKey(form.city, form.country, form.startDate, form.endDate);
     const cached = EVENTS_CACHE.get(ckey);
     const cacheValid = cached && (Date.now() - cached.ts) < EVENTS_TTL_MS;
@@ -465,14 +534,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       rapidEvents = cached!.events;
       sources.push("rapidapi-cache");
     } else if (EVENTS_MODE === "off" || EVENTS_MODE === "cache-only") {
-      // no llamada
+      // no call
     } else {
       rapidEvents = await fetchRapidEvents(form.city, form.country, form.startDate, form.endDate);
       EVENTS_CACHE.set(ckey, { ts: Date.now(), events: rapidEvents });
       if (rapidEvents.length) sources.push("rapidapi");
     }
 
-    // 5. Merge + dedupe (case-insensitive por nombre normalizado)
     const seen = new Set(itinerary.events.map(e => e.name.toLowerCase().trim()));
     const pushEvents = (arr: Event[], label: string) => {
       let added = 0;
@@ -491,14 +559,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     pushEvents(rapidEvents, "google-events");
     itinerary.events.sort((a, b) => (a.when ?? "").localeCompare(b.when ?? ""));
 
-    // 6. Restaurantes + Geoapify
+    // 6. Enrich restaurants + geoapify
     await enrichRestaurantData(itinerary.restaurants as unknown[], form.city);
     await enrichWithGeoapify(itinerary, form);
 
-    // 7. Normalizar horas: únicas, ascendentes, dentro de la ventana del cliente
+    // 7. Normalize times
     normalizeDayTimes(itinerary, form.dayStartTime || "08:00", form.dayEndTime || "23:00");
 
-    itinerary.generatedBy = `Groq LLaMA 3.3 70B · ${sources.length ? sources.join(" · ") : "no external events"} · Wikidata`;
+    itinerary.generatedBy = `Groq LLaMA 3.3 70B (batched) · ${sources.length ? sources.join(" · ") : "no external events"} · Wikidata`;
 
     return res.status(200).json(itinerary);
   } catch (err) {
