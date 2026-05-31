@@ -385,7 +385,7 @@ function normalizeDayTimes(itinerary: ItineraryData, dayStart: string, dayEnd: s
       if (t < start) t = start;
       if (t > end)   t = end;
       // Evitar empate o retroceso: separar al menos 30 min
-      if (t <= prev) t = Math.min(end, prev + 30);
+      if (t <= prev) t = Math.min(end, prev + 90);
       day.items[i].time = minToTime(t);
       prev = t;
     }
@@ -408,12 +408,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     // 1. Groq — core itinerary
     const prompt = buildItineraryPrompt(form);
-    const rawText = await callGroq(prompt, 6000);
+    const rawText = await callGroq(prompt, 8000);
     const jsonStr = extractJSON(rawText);
     let itinerary: ItineraryData;
     try { itinerary = JSON.parse(jsonStr); }
     catch {
-      const fixText = await callGroq(`Fix this JSON and return ONLY valid JSON, no explanation:\n\n${jsonStr}`, 6000, 0.2);
+      const fixText = await callGroq(`Fix this JSON and return ONLY valid JSON, no explanation:\n\n${jsonStr}`, 8000, 0.2);
       itinerary = JSON.parse(extractJSON(fixText));
     }
     itinerary.events      = itinerary.events      ?? [];
