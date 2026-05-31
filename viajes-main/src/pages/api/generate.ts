@@ -1,6 +1,6 @@
 // src/pages/api/generate.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { buildDaysBatchPrompt, buildMetadataPrompt, buildItineraryPrompt } from "@/lib/prompt";
+import { buildDaysBatchPrompt, buildMetadataPrompt } from "@/lib/prompt";
 import type { TripFormData, ItineraryData, Hotel, Event } from "@/lib/types";
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -290,7 +290,7 @@ async function enrichRestaurantData(restaurants: any[], city: string) {
   } catch { /* silent */ }
 }
 
-// ── Geoapify ─────────────────────────────────────────────────
+// ── Geoapify ──────────────────────────────────────────────────
 async function enrichWithGeoapify(itinerary: ItineraryData, form: TripFormData) {
   const key = process.env.GEOAPIFY_API_KEY;
   if (!key) return;
@@ -319,7 +319,6 @@ async function enrichWithGeoapify(itinerary: ItineraryData, form: TripFormData) 
         for (const a of it.alternatives ?? []) used.add(a.name.toLowerCase());
       }
     }
-
     for (const day of (itinerary.days ?? []).slice(0, 3)) {
       const sightItems = (day.items ?? []).filter((i) => i.type === "sight" || i.type === "event");
       for (const item of sightItems) {
@@ -346,7 +345,7 @@ async function enrichWithGeoapify(itinerary: ItineraryData, form: TripFormData) 
   } catch { /* silent */ }
 }
 
-// ── Normalización horaria por día ─────────────────────────────
+// ── Normalización horaria ─────────────────────────────────────
 function timeToMin(t: string): number {
   const m = /^(\d{1,2}):(\d{2})/.exec(t || "");
   if (!m) return 0;
@@ -374,45 +373,47 @@ function normalizeDayTimes(itinerary: ItineraryData, dayStart: string, dayEnd: s
   }
 }
 
-// ── BATCH: genera días en lotes de 2 en paralelo ──────────────
-async function generateDaysBatched(form: TripFormData, totalDays: number): Promise<ItineraryData["days"]> {
-  // Build batch ranges: [1,2], [3,4], [5,6], ...
-  const batches: Array<[number, number]> = [];
-  for (let d = 1; d <= totalDays; d += 2) {
-    batches.push([d, Math.min(d + 1, totalDays)]);
-  }
-
-  // Run all batches in parallel
-  const results = await Promise.allSettled(
-    batches.map(async ([from, to]) => {
-      const prompt = buildDaysBatchPrompt(form, from, to);
-      const raw = await callGroq(prompt, 8000, 0.7);
-      const jsonStr = extractJSONArray(raw);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let arr: any[];
-      try {
-        arr = JSON.parse(jsonStr);
-      } catch {
-        // Attempt repair
-        const fix = await callGroq(
-          `Fix this JSON array and return ONLY a valid JSON array, no explanation:\n\n${jsonStr}`,
-          8000, 0.2
-        );
-        arr = JSON.parse(extractJSONArray(fix));
-      }
-      if (!Array.isArray(arr)) throw new Error(`Batch ${from}-${to} did not return array`);
-      return arr;
-    })
-  );
-
-  // Flatten and sort by dayNum
+// ── Genera días de forma SECUENCIAL en lotes de 3 ────────────
+// Secuencial para respetar el límite de 6000 TPM del free tier de Groq.
+// Cada lote pide máximo 3 días con formato compacto (~4500 tokens de salida).
+async function generateDaysSequential(form: TripFormData, totalDays: number): Promise<ItineraryData["days"]> {
+  const BATCH_SIZE = 3; // 3 días * ~7 items * ~150 tokens/item = ~3150 tokens por lote
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const allDays: any[] = [];
-  for (const result of results) {
-    if (result.status === "fulfilled") {
-      allDays.push(...result.value);
-    } else {
-      console.error("[generateDaysBatched] batch failed:", result.reason);
+
+  for (let fromDay = 1; fromDay <= totalDays; fromDay += BATCH_SIZE) {
+    const toDay = Math.min(fromDay + BATCH_SIZE - 1, totalDays);
+    const prompt = buildDaysBatchPrompt(form, fromDay, toDay);
+
+    let raw: string;
+    try {
+      raw = await callGroq(prompt, 7500, 0.7);
+    } catch (err) {
+      console.error(`[days batch ${fromDay}-${toDay}] Groq call failed:`, err);
+      continue;
+    }
+
+    const jsonStr = extractJSONArray(raw);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let arr: any[];
+    try {
+      arr = JSON.parse(jsonStr);
+    } catch {
+      console.warn(`[days batch ${fromDay}-${toDay}] JSON parse failed, attempting repair`);
+      try {
+        const fix = await callGroq(
+          `Fix this JSON array. Return ONLY the valid JSON array, nothing else:\n\n${jsonStr.slice(0, 6000)}`,
+          7500, 0.1
+        );
+        arr = JSON.parse(extractJSONArray(fix));
+      } catch (err2) {
+        console.error(`[days batch ${fromDay}-${toDay}] repair also failed:`, err2);
+        continue;
+      }
+    }
+
+    if (Array.isArray(arr)) {
+      allDays.push(...arr);
     }
   }
 
@@ -436,70 +437,46 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const ed = new Date(form.endDate + "T12:00:00");
     const totalDays = Math.round((ed.getTime() - sd.getTime()) / 86400000) + 1;
 
-    // 1. Parallel: days (batched) + metadata + external data
-    const [
-      daysResult,
-      metadataResult,
-      wikidataRes,
-      weatherRes,
-      tmRes,
-      ebRes,
-      tradRes,
-    ] = await Promise.allSettled([
-      generateDaysBatched(form, totalDays),
-      (async () => {
-        const prompt = buildMetadataPrompt(form);
-        const raw = await callGroq(prompt, 3000, 0.6);
-        const jsonStr = extractJSON(raw);
-        try {
-          return JSON.parse(jsonStr);
-        } catch {
-          const fix = await callGroq(
-            `Fix this JSON and return ONLY valid JSON, no explanation:\n\n${jsonStr}`,
-            3000, 0.2
-          );
-          return JSON.parse(extractJSON(fix));
-        }
-      })(),
+    // ── PASO 1: Días (secuencial, respeta TPM) ────────────────
+    const days = await generateDaysSequential(form, totalDays);
+
+    // ── PASO 2: Metadata (secuencial tras los días) ───────────
+    let metadata: Record<string, unknown> = {};
+    try {
+      const metaRaw = await callGroq(buildMetadataPrompt(form), 3000, 0.6);
+      const metaStr = extractJSON(metaRaw);
+      metadata = JSON.parse(metaStr);
+    } catch (err) {
+      console.error("[metadata] failed:", err);
+    }
+
+    // ── PASO 3: Eventos tradicionales (secuencial) ────────────
+    const tradEvents = await fetchTraditionalEvents(form);
+
+    // ── PASO 4: APIs externas en paralelo (no son Groq, no afectan TPM) ──
+    const [wikidataRes, weatherRes, tmRes, ebRes] = await Promise.allSettled([
       fetchWikidataAttractions(form.city),
       fetchWeather(form.city, form.country),
       fetchTicketmaster(form.city, form.startDate, form.endDate),
       fetchEventbrite(form.city, form.startDate, form.endDate),
-      fetchTraditionalEvents(form),
     ]);
 
-    // 2. Assemble itinerary from metadata + days
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let metadata: any = {};
-    if (metadataResult.status === "fulfilled") {
-      metadata = metadataResult.value;
-    } else {
-      console.error("[metadata] failed:", metadataResult.reason);
-      // Fallback: use a single legacy call
-      try {
-        const legacyRaw = await callGroq(buildItineraryPrompt(form), 8000);
-        const legacyParsed = JSON.parse(extractJSON(legacyRaw));
-        metadata = legacyParsed;
-      } catch (e) {
-        console.error("[legacy fallback] also failed:", e);
-      }
-    }
-
+    // ── Ensamblar itinerario ───────────────────────────────────
     const itinerary: ItineraryData = {
-      city:                 metadata.city                ?? form.city,
-      country:              metadata.country             ?? form.country,
-      tagline:              metadata.tagline             ?? "",
-      summary:              metadata.summary             ?? "",
-      weather:              metadata.weather             ?? { maxTemp: 25, minTemp: 15, description: "" },
-      estimatedBudgetPerDay: metadata.estimatedBudgetPerDay ?? "",
-      days:                 daysResult.status === "fulfilled" ? daysResult.value : (metadata.days ?? []),
-      restaurants:          metadata.restaurants         ?? [],
-      events:               metadata.events              ?? [],
-      alerts:               metadata.alerts              ?? [],
-      hotels:               buildHotelLinks(form),
+      city:                  metadata.city                 as string ?? form.city,
+      country:               metadata.country              as string ?? form.country,
+      tagline:               metadata.tagline              as string ?? "",
+      summary:               metadata.summary              as string ?? "",
+      weather:               (metadata.weather             as ItineraryData["weather"]) ?? { maxTemp: 25, minTemp: 15, description: "" },
+      estimatedBudgetPerDay: metadata.estimatedBudgetPerDay as string ?? "",
+      days,
+      restaurants:           (metadata.restaurants         as ItineraryData["restaurants"]) ?? [],
+      events:                (metadata.events              as Event[]) ?? [],
+      alerts:                (metadata.alerts              as ItineraryData["alerts"]) ?? [],
+      hotels:                buildHotelLinks(form),
     };
 
-    // 3. Wikidata enrichment
+    // ── Wikidata enrichment ───────────────────────────────────
     if (wikidataRes.status === "fulfilled") {
       const wdPlaces = wikidataRes.value;
       for (const day of itinerary.days ?? []) {
@@ -514,20 +491,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // 4. Weather override
+    // ── Weather override ──────────────────────────────────────
     if (weatherRes.status === "fulfilled" && weatherRes.value) {
       itinerary.weather = { ...itinerary.weather, ...weatherRes.value };
     }
 
-    // 5. Events merge
-    const tmEvents   = tmRes.status   === "fulfilled" ? tmRes.value   : [];
-    const ebEvents   = ebRes.status   === "fulfilled" ? ebRes.value   : [];
-    const tradEvents = tradRes.status === "fulfilled" ? tradRes.value : [];
+    // ── Events merge ──────────────────────────────────────────
+    const tmEvents = tmRes.status === "fulfilled" ? tmRes.value : [];
+    const ebEvents = ebRes.status === "fulfilled" ? ebRes.value : [];
 
     const ckey = cacheKey(form.city, form.country, form.startDate, form.endDate);
     const cached = EVENTS_CACHE.get(ckey);
     const cacheValid = cached && (Date.now() - cached.ts) < EVENTS_TTL_MS;
-
     let rapidEvents: Event[] = [];
     const sources: string[] = [];
     if (cacheValid) {
@@ -559,14 +534,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     pushEvents(rapidEvents, "google-events");
     itinerary.events.sort((a, b) => (a.when ?? "").localeCompare(b.when ?? ""));
 
-    // 6. Enrich restaurants + geoapify
+    // ── Enrich restaurants + geoapify ─────────────────────────
     await enrichRestaurantData(itinerary.restaurants as unknown[], form.city);
     await enrichWithGeoapify(itinerary, form);
 
-    // 7. Normalize times
+    // ── Normalize times ───────────────────────────────────────
     normalizeDayTimes(itinerary, form.dayStartTime || "08:00", form.dayEndTime || "23:00");
 
-    itinerary.generatedBy = `Groq LLaMA 3.3 70B (batched) · ${sources.length ? sources.join(" · ") : "no external events"} · Wikidata`;
+    itinerary.generatedBy = `Groq LLaMA 3.3 70B · ${sources.length ? sources.join(" · ") : "no external events"} · Wikidata`;
 
     return res.status(200).json(itinerary);
   } catch (err) {
