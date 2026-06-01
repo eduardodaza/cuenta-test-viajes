@@ -251,7 +251,7 @@ export default function ItineraryView({ data, locale, onReset, form }: Props) {
       {editModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div className="card" style={{ width: 420, maxWidth: "92%", maxHeight: "85vh", overflowY: "auto" }}>
-            <h3 style={{ fontSize: 16, fontWeight: 500, marginBottom: 12 }}>✏️ {t("customize", locale)}: {editModal.name}</h3>
+            <h3 style={{ fontSize: 16, fontWeight: 500, marginBottom: 12 }}>✏️ Editar itinerario: {editModal.name}</h3>
 
             {editModal.alternatives && editModal.alternatives.length > 0 && (
               <div style={{ marginBottom: 14, padding: 10, background: "#f8f7f4", borderRadius: 8, border: "1px solid #ede9e2" }}>
@@ -315,17 +315,40 @@ function DayCard({ day, index, open, onToggle, edits, onEdit, locale }: {
   onToggle: () => void; edits: UserEdits;
   onEdit: (item: ItineraryItem) => void; locale: Locale;
 }) {
+  // Ruta del día en Google Maps: encadena todos los stops visitables (sights, food, events, beach, night)
+  const routeStops = day.items.filter(it =>
+    ["sight", "food", "event", "beach", "night"].includes(it.type)
+  );
+  const q = (s: string) => encodeURIComponent(s.trim());
+  const waypoints = routeStops
+    .map(it => it.lat && it.lon ? `${it.lat},${it.lon}` : q(`${it.name} ${day.zone ?? ""}`))
+    .join("/");
+  const routeUrl = routeStops.length >= 2
+    ? `https://www.google.com/maps/dir/${waypoints}`
+    : routeStops.length === 1
+      ? `https://www.google.com/maps/search/?api=1&query=${q(`${routeStops[0].name} ${day.zone ?? ""}`)}`
+      : null;
+
   return (
     <div className="card" style={{ marginBottom: 10, padding: 0, overflow: "hidden" }}>
-      <div onClick={onToggle} style={{ padding: "12px 16px", borderBottom: open ? "1px solid #f0efea" : "none", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
-        <div>
+      <div style={{ padding: "12px 16px", borderBottom: open ? "1px solid #f0efea" : "none", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <div onClick={onToggle} style={{ cursor: "pointer", flex: 1 }}>
           <div style={{ fontSize: 11, fontWeight: 500, color: "#1a6b4a", textTransform: "uppercase", letterSpacing: "0.06em" }}>
             {t("day", locale)} {day.dayNum} · {day.date}
           </div>
           <div style={{ fontSize: 14, fontWeight: 500, color: "#1a1a18", marginTop: 1 }}>{day.theme}</div>
           {day.zone && <div style={{ fontSize: 11, color: "#888", marginTop: 1 }}>📍 {day.zone}</div>}
         </div>
-        <span style={{ fontSize: 18, color: "#aaa", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>⌄</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {routeUrl && (
+            <a href={routeUrl} target="_blank" rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              style={{ fontSize: 10, padding: "4px 10px", background: "#1a6b4a", color: "white", borderRadius: 12, textDecoration: "none", fontWeight: 500, whiteSpace: "nowrap" }}>
+              🗺 Ruta en Maps ↗
+            </a>
+          )}
+          <span onClick={onToggle} style={{ fontSize: 18, color: "#aaa", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s", cursor: "pointer" }}>⌄</span>
+        </div>
       </div>
 
       {open && day.items.map(item => {
@@ -374,7 +397,7 @@ function DayCard({ day, index, open, onToggle, edits, onEdit, locale }: {
 
               <button onClick={() => onEdit(item)}
                 style={{ fontSize: 10, padding: "2px 8px", border: "1px solid #ede9e2", borderRadius: 6, background: "transparent", color: "#888", cursor: "pointer", marginTop: 8 }}>
-                ✏️ {t("customize", locale)}
+                ✏️ Editar itinerario
               </button>
             </div>
           </div>
