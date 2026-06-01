@@ -84,8 +84,8 @@ export function buildDaysBatchPrompt(form: TripFormData, fromDay: number, toDay:
 
   // Build the zones note for continuity in later batches
   const laterBatchNote = fromDay > 1
-    ? `Days 1–${fromDay - 1} already generated. Use DIFFERENT zones and landmarks from earlier days.`
-    : `Day 1 MUST start with the single most iconic must-see of ${form.city}.`;
+    ? `Days 1–${fromDay - 1} already generated. Use DIFFERENT zones and DIFFERENT landmarks from earlier days. Do NOT repeat any POI used previously, not even inside "alternatives".`
+    : `Day 1 MUST start with the #1 most iconic must-see of ${form.city} (e.g. Sagrada Família in Barcelona, Eiffel Tower in Paris, Colosseum in Rome).`;
 
   return `You are a SENIOR LOCAL TRAVEL EXPERT for ${form.city}, ${form.country}. Generate a schedule in ${lang}.
 
@@ -99,10 +99,12 @@ RULES (all mandatory):
 1. Generate ONLY days ${fromDay} to ${toDay}. Each day: 7–10 items.
 2. Times: unique, ascending, evenly spread from ${dayStart} to ${dayEnd}. No gap > 2.5 hours.
 3. Each day uses a UNIQUE zone/sector (different from every other day in the full trip).
-4. Every sight/food/event/beach/night item: include "alternatives" array with 2 REAL alternatives (same zone, same budget tier).
-5. Prices consistent with budget profile. Lunch 12:00–15:30. Dinner 19:00–23:00. Museums 09:00–17:00.
-6. All places must be REAL venues that exist in ${form.city}.
-7. description: 1 sentence only (keep tokens short). tip: max 10 words.
+4. HIERARCHY — CRITICAL: The PRIMARY "name" of every sight/event MUST be one of the top-tier iconic landmarks of ${form.city} (the ones any tourist guide lists in "top 10 must-see"). NEVER place a top-tier icon inside "alternatives" — icons go in the main slot. "alternatives" are SECONDARY options (lesser-known but quality picks in the same zone & budget). Example for Barcelona: Sagrada Família, Park Güell, Casa Batlló, La Pedrera (Casa Milà), Camp Nou, Tibidabo, Catedral, Casa Vicens, Palau de la Música, Mercat de la Boqueria, Barri Gòtic, Montjuïc → ALL these belong in PRIMARY slots across the trip, never as alternatives.
+5. NO REPETITION: A POI used as PRIMARY or as ALTERNATIVE in any day CANNOT appear again in ANY other day (neither primary nor alternative). Each POI is unique across the entire trip.
+6. Every sight/food/event/beach/night item: include "alternatives" array with 2 REAL alternatives (same zone, same budget tier, NEVER an iconic top-10 landmark).
+7. Prices consistent with budget profile. Lunch 12:00–15:30. Dinner 19:00–23:00. Museums 09:00–17:00.
+8. All places must be REAL venues that exist in ${form.city}.
+9. description: 1 sentence only (keep tokens short). tip: max 10 words.
 
 Respond ONLY with a valid JSON array (no markdown, no backticks, no explanation):
 [
@@ -196,7 +198,7 @@ export function buildItineraryPrompt(form: TripFormData): string {
 TRIP: ${form.city} | ${totalDays} days (${startMonth} ${startDay}–${endDay}) | ${form.travelers} (${form.travelerType}) | Budget: ${form.budget} | Interests: ${focusLine} | Window: ${dayStart}→${dayEnd}
 Traveler: ${travelerLine}
 Budget: ${budgetLine}
-RULES: Day1=most iconic. Each day unique zone. 7–10 items/day, times unique ascending ${dayStart}→${dayEnd}, no gap >2.5h. Every sight/food/event/night: 2 alternatives. Budget-consistent prices. Lunch 12-15:30, Dinner 19-23. ${minResto}–${maxResto} restaurants with dayHint. ≥4 events. All places REAL in ${form.city}.
+RULES: Day1=#1 iconic must-see. Each day unique zone. 7–10 items/day, times unique ascending ${dayStart}→${dayEnd}, no gap >2.5h. HIERARCHY: top-tier iconic landmarks ALWAYS go in PRIMARY "name", NEVER inside "alternatives". NO POI REPETITION across days (not even in alternatives). Every sight/food/event/night: 2 SECONDARY alternatives (same zone & budget, never an iconic top-10). Budget-consistent prices. Lunch 12-15:30, Dinner 19-23. ${minResto}–${maxResto} restaurants with dayHint. ≥4 events. All places REAL in ${form.city}.
 Respond ONLY valid JSON (no markdown):
 {"city":"${form.city}","country":"${form.country}","tagline":"max 10 words","summary":"2 sentences","weather":{"maxTemp":25,"minTemp":15,"description":"weather"},"estimatedBudgetPerDay":"range","days":[{"dayNum":1,"theme":"theme","date":"${firstDayLabel}","zone":"sector","items":[{"id":"d1i1","time":"${dayStart}","type":"sight","name":"place","description":"1 sentence","duration":"1h 30min","transport":"metro","transportTime":"10 min","price":"$$","rating":"4.8","tip":"tip","alternatives":[{"name":"alt","description":"1 sentence","type":"sight","duration":"1h","transport":"walking","transportTime":"5 min","price":"$$","rating":"4.4","tip":"why"}]}]}],"restaurants":[{"name":"restaurant","type":"cuisine","priceRange":"$$","rating":"4.3","specialty":"dish","zone":"neighborhood","source":"TripAdvisor","address":"address","dayHint":1,"mealHint":"lunch"}],"events":[{"name":"event","type":"festival","when":"YYYY-MM-DD","description":"1 sentence","price":"Free","venue":"venue","source":"local"}],"alerts":[{"level":"medio","zone":"zone","description":"note","tip":"tip"}]}`;
 }
